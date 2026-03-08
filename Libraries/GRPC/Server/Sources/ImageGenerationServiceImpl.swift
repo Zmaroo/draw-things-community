@@ -103,7 +103,6 @@ public enum ImageGenerationServiceError: Error {
 }
 
 public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
-
   private let queue: DispatchQueue
   private let backupQueue: DispatchQueue
   private let imageGeneratorLock: DispatchQueue
@@ -149,6 +148,42 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     imageGeneratorLock = DispatchQueue(label: "ImageGenerationServiceImpl.imageGeneratorLock")
     serverIdentifier = UInt64.random(in: UInt64.min...UInt64.max)
     logger.info("ImageGenerationServiceImpl init")
+  }
+
+  private func requestedImageResponseFormat(from request: ImageGenerationRequest)
+    -> RequestedImageResponseFormat
+  {
+    switch request.responseFormat {
+    case .responseFormatPng:
+      return .png
+    case .responseFormatJpeg:
+      return .jpeg
+    case .responseFormatTensor, .UNRECOGNIZED:
+      return .tensor
+    }
+  }
+
+  private func validateGenerationRequest(
+    configuration: GenerationConfiguration, modelOverrides: [ModelZoo.Specification]
+  ) throws {
+    guard configuration.steps > 0 else {
+      throw GRPCStatus(
+        code: .invalidArgument, message: "Invalid configuration: steps must be > 0")
+    }
+    guard configuration.startWidth > 0, configuration.startHeight > 0 else {
+      throw GRPCStatus(
+        code: .invalidArgument, message: "Invalid dimensions: startWidth/startHeight must be > 0")
+    }
+    if let model = configuration.model, !model.isEmpty {
+      let hasModelMapping =
+        ModelZoo.specificationForModel(model) != nil
+        || ModelZoo.specificationForHumanReadableModel(model) != nil
+        || modelOverrides.contains(where: { $0.file == model || $0.name == model })
+      guard hasModelMapping else {
+        throw GRPCStatus(
+          code: .invalidArgument, message: "Invalid configuration: missing model map for \(model)")
+      }
+    }
   }
 
   static private func cancellationMonitoring(
@@ -326,6 +361,13 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       (try? jsonDecoder.decode(
         [FailableDecodable<ModelZoo.Specification>].self, from: override.models
       ).compactMap({ $0.value })) ?? []
+    do {
+      try validateGenerationRequest(configuration: configuration, modelOverrides: models)
+    } catch {
+      promise.fail(error)
+      context.statusPromise.fail(error)
+      return
+    }
     let loras =
       (try? jsonDecoder.decode(
         [FailableDecodable<LoRAZoo.Specification>].self, from: override.loras
@@ -359,6 +401,8 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       UpscalerZoo.overrideMapping = [:]
     }
     let chunked = request.chunked
+    let requestedFormat = requestedImageResponseFormat(from: request)
+    logger.info("Requested response format: \(String(describing: requestedFormat))")
 
     let progressUpdateHandler:
       (ImageGeneratorSignpost, Set<ImageGeneratorSignpost>, Tensor<FloatType>?) -> Bool = {
@@ -379,9 +423,12 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
               ImageGenerationSignpostProto(from: signpost)
             })
 
-          if let previewTensor = previewTensor {
-            let codec: DynamicGraph.Store.Codec = responseCompression ? [.zip, .fpzip] : []
-            $0.previewImage = previewTensor.data(using: codec)
+          if let previewTensor = previewTensor,
+            let encodedPreview = ImageResponseEncoder.encodePreviewImage(
+              from: previewTensor, responseFormat: requestedFormat,
+              responseCompression: responseCompression)
+          {
+            $0.previewImage = encodedPreview.payload
           }
         }
 
@@ -472,14 +519,19 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
 
       successFlag.store(true, ordering: .releasing)
 
-      let codec: DynamicGraph.Store.Codec = responseCompression ? [.zip, .fpzip] : []
-      let imageDatas =
-        images?.compactMap { $0.data(using: codec) } ?? []
-      let audioData = audio?.compactMap { $0.data(using: codec) }
+      let encodedImages = ImageResponseEncoder.encodeImages(
+        from: images, responseFormat: requestedFormat,
+        responseCompression: responseCompression)
+      let imageDatas = encodedImages.payloads
+      let audioCodec: DynamicGraph.Store.Codec = responseCompression ? [.zip, .fpzip] : []
+      let audioData = audio?.compactMap { $0.data(using: audioCodec) }
       logger.info("Image processed")
       let totalBytes = imageDatas.reduce(0) { partialResult, imageData in
         return partialResult + imageData.count
       }
+      logger.info(
+        "Image response payloadType=\(encodedImages.payloadType.rawValue), count=\(imageDatas.count), bytes=\(totalBytes)"
+      )
       if totalBytes > 0 {
         let projectionResponse = ImageGenerationResponse.with {
           $0.downloadSize = Int64(totalBytes)
@@ -512,29 +564,15 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
         logger.info("Image processed successfully, should send in chunks? \(chunked)")
         if chunked {
           for imageData in imageDatas {
-            let dataSize = imageData.count
-            if dataSize <= 4 * 1024 * 1024 {
+            let chunks = ImageResponseEncoder.chunkedPayloads(
+              imageData, maxChunkSize: 4 * 1024 * 1024)
+            for (index, chunk) in chunks.enumerated() {
               let finalResponse = ImageGenerationResponse.with {
-                $0.generatedImages = [imageData]
+                $0.generatedImages = [chunk]
                 $0.scaleFactor = Int32(scaleFactor)
-                $0.chunkState = .lastChunk
+                $0.chunkState = index == chunks.count - 1 ? .lastChunk : .moreChunks
               }
               context.sendResponse(finalResponse, promise: nil)
-            } else {
-              for j in stride(from: 0, to: dataSize, by: 4 * 1024 * 1024) {
-                let chunkSize = min(4 * 1024 * 1024, dataSize - j)
-                let subdata = imageData[j..<(j + chunkSize)]
-                let finalResponse = ImageGenerationResponse.with {
-                  $0.generatedImages = [subdata]
-                  $0.scaleFactor = Int32(scaleFactor)
-                  if j + chunkSize == dataSize {
-                    $0.chunkState = .lastChunk
-                  } else {
-                    $0.chunkState = .moreChunks
-                  }
-                }
-                context.sendResponse(finalResponse, promise: nil)
-              }
             }
           }
         } else {

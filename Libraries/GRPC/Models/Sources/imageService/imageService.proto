@@ -56,6 +56,12 @@ enum DeviceType {
   LAPTOP = 2;
 }
 
+enum ResponseFormat {
+  RESPONSE_FORMAT_TENSOR = 0;
+  RESPONSE_FORMAT_PNG = 1;
+  RESPONSE_FORMAT_JPEG = 2;
+}
+
 // parameters in this Request is exactly same as generate function in ImageGenerator
 message ImageGenerationRequest {
   optional bytes image = 1;      // Image data as sha256 content.
@@ -72,6 +78,7 @@ message ImageGenerationRequest {
   repeated bytes contents = 12; // The image data as array of bytes. It is addressed by its sha256 content. This is modeled as content-addressable storage.
   optional string sharedSecret = 13; // The secret use to authenticate if needed.
   bool chunked = 14; // Whether we can accept chunked response.
+  ResponseFormat responseFormat = 15;
 }
 
 message HintProto {

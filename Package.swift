@@ -403,6 +403,7 @@ let package = Package(
         "GRPCFileUploader.swift",
         "GRPCHostnameUtils.swift",
         "GRPCServerAdvertiser.swift",
+        "ImageResponseEncoder.swift",
         "ImageGenerationClientWrapper.swift",
         "ImageGenerationServiceImpl.swift",
         "ProtectedValue.swift",

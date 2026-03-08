@@ -1,5 +1,5 @@
-load("@build_bazel_rules_swift//swift:swift.bzl", "swift_binary", "swift_interop_hint", "swift_library", "swift_test")
 load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@build_bazel_rules_swift//swift:swift.bzl", "swift_binary", "swift_interop_hint", "swift_library", "swift_test")
 
 config_setting(
     name = "macos_build",
@@ -44,6 +44,7 @@ swift_library(
         "Server/Sources/GRPCServerAdvertiser.swift",
         "Server/Sources/ImageGenerationClientWrapper.swift",
         "Server/Sources/ImageGenerationServiceImpl.swift",
+        "Server/Sources/ImageResponseEncoder.swift",
         "Server/Sources/ProtectedValue.swift",
     ] + select({
         ":ios_or_macos_build": [
@@ -78,6 +79,19 @@ swift_library(
             ":C_DNSAdvertiser",
         ],
     }),
+)
+
+swift_test(
+    name = "GRPCServerResponseEncodingTests",
+    srcs = [
+        "Tests/ImageResponseEncoderTests.swift",
+    ],
+    deps = [
+        ":GRPCImageServiceModels",
+        ":GRPCServer",
+        "//Libraries/SwiftDiffusion",
+        "@s4nnc//nnc",
+    ],
 )
 
 swift_library(

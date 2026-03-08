@@ -13,6 +13,55 @@ import NIOHPACK
 import NNC
 import OrderedCollections
 
+#if canImport(CoreGraphics) && canImport(ImageIO)
+  import CoreGraphics
+  import ImageIO
+#endif
+
+private func tensorFromEncodedImageData(_ data: Data) -> Tensor<FloatType>? {
+  #if canImport(CoreGraphics) && canImport(ImageIO)
+    guard
+      let imageSource = CGImageSourceCreateWithData(data as CFData, nil),
+      let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil)
+    else {
+      return nil
+    }
+    guard
+      let bitmapContext = CGContext(
+        data: nil, width: cgImage.width, height: cgImage.height, bitsPerComponent: 8,
+        bytesPerRow: cgImage.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGBitmapInfo.byteOrderDefault.rawValue
+          | CGImageAlphaInfo.premultipliedLast.rawValue, releaseCallback: nil, releaseInfo: nil)
+    else {
+      return nil
+    }
+    bitmapContext.draw(
+      cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+    guard let data = bitmapContext.data else { return nil }
+    let bytes = data.assumingMemoryBound(to: UInt8.self)
+    let width = bitmapContext.width
+    let height = bitmapContext.height
+    let bytesPerRow = bitmapContext.bytesPerRow
+    var tensor = Tensor<FloatType>(.CPU, .NHWC(1, height, width, 3))
+    tensor.withUnsafeMutableBytes { rawBuffer in
+      guard let fp = rawBuffer.baseAddress?.assumingMemoryBound(to: FloatType.self) else { return }
+      for y in 0..<height {
+        let row = y * bytesPerRow
+        for x in 0..<width {
+          let src = row + x * 4
+          let dst = (y * width + x) * 3
+          fp[dst] = FloatType((Float(bytes[src]) / 127.5) - 1)
+          fp[dst + 1] = FloatType((Float(bytes[src + 1]) / 127.5) - 1)
+          fp[dst + 2] = FloatType((Float(bytes[src + 2]) / 127.5) - 1)
+        }
+      }
+    }
+    return tensor
+  #else
+    return nil
+  #endif
+}
+
 public enum RemoteImageGeneratorError: Error {
   case notConnected
   case failedWithStatus(GRPCStatus)
@@ -130,6 +179,7 @@ public struct RemoteImageGenerator: ImageGenerator {
     request.user = name
     request.device = DeviceType(from: deviceType)
     request.chunked = true
+    request.responseFormat = .responseFormatPng
     if let sharedSecret = sharedSecret {
       request.sharedSecret = sharedSecret
     }
@@ -246,6 +296,8 @@ public struct RemoteImageGenerator: ImageGenerator {
             }
             if let image = Tensor<FloatType>(data: imageData, using: [.zip, .fpzip]) {
               return Tensor<FloatType>(from: image)
+            } else if let image = tensorFromEncodedImageData(imageData) {
+              return image
             } else {
               return nil
             }
@@ -309,6 +361,10 @@ public struct RemoteImageGenerator: ImageGenerator {
             data: response.previewImage, using: [.zip, .fpzip])
         {
           previewTensor = Tensor<FloatType>(from: tensor)  // This force to convert the tensor into existing type.
+        } else if response.hasPreviewImage,
+          let image = tensorFromEncodedImageData(response.previewImage)
+        {
+          previewTensor = image
         }
         let isGenerating = feedback(currentSignpost, signpostsSet, previewTensor)
         if !isGenerating {

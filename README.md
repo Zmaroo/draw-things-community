@@ -34,6 +34,10 @@ You can also inspect CLI options with:
 swift run gRPCServerCLI --help
 ```
 
+For external (non-tensor) clients using gRPC image generation, set
+`ImageGenerationRequest.responseFormat = RESPONSE_FORMAT_PNG`.
+If `responseFormat` is omitted, the server defaults to tensor payloads for backward compatibility.
+
 # Self-host gRPCServerCLI from Packaged Binaries
 
 We provide pre-built self-hosted gRPCServerCLI binaries through this repository. Latest version should be available at [Releases](https://github.com/drawthingsai/draw-things-community/releases).
