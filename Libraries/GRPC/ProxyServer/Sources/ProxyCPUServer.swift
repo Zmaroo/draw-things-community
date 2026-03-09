@@ -5,6 +5,7 @@ import Foundation
 import GRPC
 import GRPCControlPanelModels
 import GRPCImageServiceModels
+import GRPCLegacyCompat
 import Logging
 import ModelZoo
 import NIO
@@ -450,8 +451,7 @@ public actor ControlConfigs {
 }
 
 final class ControlPanelService: ControlPanelServiceProvider {
-  var interceptors:
-    (any GRPCControlPanelModels.ControlPanelServiceServerInterceptorFactoryProtocol)?
+  var interceptors: (any ControlPanelServiceServerInterceptorFactoryProtocol)?
   private let taskQueue: TaskQueue
   private var controlConfigs: ControlConfigs
   private var proxyMessageSigner: ProxyMessageSigner
@@ -683,8 +683,7 @@ final class ControlPanelService: ControlPanelServiceProvider {
 }
 
 final class ImageGenerationProxyService: ImageGenerationServiceProvider {
-  var interceptors:
-    (any GRPCImageServiceModels.ImageGenerationServiceServerInterceptorFactoryProtocol)?
+  var interceptors: (any ImageGenerationServiceServerInterceptorFactoryProtocol)?
 
   private let taskQueue: TaskQueue
   private let logger: Logger

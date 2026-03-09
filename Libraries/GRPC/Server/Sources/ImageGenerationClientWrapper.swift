@@ -3,6 +3,7 @@ import BinaryResources
 import Foundation
 import GRPC
 import GRPCImageServiceModels
+import GRPCLegacyCompat
 import ModelZoo
 import NIO
 import NIOHTTP2

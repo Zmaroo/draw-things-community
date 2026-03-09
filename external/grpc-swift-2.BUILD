@@ -29,7 +29,7 @@ swift_library(
     module_name = "GRPCCore",
     visibility = ["//visibility:public"],
     deps = [
-        "@SwiftCollectionsForGRPC2//:DequeModule",
+        "@SwiftCollections//:Collections",
     ],
 )
 

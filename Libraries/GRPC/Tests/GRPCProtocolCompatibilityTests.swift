@@ -41,40 +41,40 @@ final class GRPCProtocolCompatibilityTests: XCTestCase {
 
   func testRequestSplitFormatsRoundTrip() throws {
     var request = ImageGenerationRequest()
-    request.responseFormat = .responseFormatPng  // legacy compatibility field
-    request.previewResponseFormat = .responseFormatJpeg
-    request.finalResponseFormat = .responseFormatPng
-    request.previewEveryNSteps = 2
+    request.responseFormat = .png  // legacy compatibility field
+    request.previewResponseFormat = .jpeg
+    request.finalResponseFormat = .png
+    request.previewEveryNsteps = 2
 
     let bytes = try request.serializedData()
     let decoded = try ImageGenerationRequest(serializedBytes: bytes)
 
-    XCTAssertEqual(decoded.responseFormat, .responseFormatPng)
-    XCTAssertEqual(decoded.previewResponseFormat, .responseFormatJpeg)
-    XCTAssertEqual(decoded.finalResponseFormat, .responseFormatPng)
-    XCTAssertEqual(decoded.previewEveryNSteps, 2)
+    XCTAssertEqual(decoded.responseFormat, .png)
+    XCTAssertEqual(decoded.previewResponseFormat, .jpeg)
+    XCTAssertEqual(decoded.finalResponseFormat, .png)
+    XCTAssertEqual(decoded.previewEveryNsteps, 2)
   }
 
   func testResponsePayloadTypesRoundTrip() throws {
     var response = ImageGenerationResponse()
-    response.previewPayloadType = .responsePayloadTypePng
-    response.finalPayloadType = .responsePayloadTypeJpeg
+    response.previewPayloadType = .png
+    response.finalPayloadType = .jpeg
 
     let bytes = try response.serializedData()
     let decoded = try ImageGenerationResponse(serializedBytes: bytes)
 
-    XCTAssertEqual(decoded.previewPayloadType, .responsePayloadTypePng)
-    XCTAssertEqual(decoded.finalPayloadType, .responsePayloadTypeJpeg)
+    XCTAssertEqual(decoded.previewPayloadType, .png)
+    XCTAssertEqual(decoded.finalPayloadType, .jpeg)
   }
 
   func testResponseFormatZeroDecodesAsUnspecifiedAlias() throws {
     var request = ImageGenerationRequest()
-    request.responseFormat = .responseFormatUnspecified
+    request.responseFormat = .unspecified
 
     let bytes = try request.serializedData()
     let decoded = try ImageGenerationRequest(serializedBytes: bytes)
 
-    XCTAssertEqual(decoded.responseFormat, .responseFormatUnspecified)
+    XCTAssertEqual(decoded.responseFormat, .unspecified)
   }
 
   func testChunkReassemblyIsStableWhenLastChunkHasNoPayload() {

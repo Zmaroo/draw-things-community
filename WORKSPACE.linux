@@ -156,7 +156,7 @@ new_git_repository(
 # Note that swift-fickling can actually determine what version of SwiftCollections we use
 new_git_repository(
     name = "SwiftCollections",
-    build_file = "swift-collections.BUILD",
+    build_file = "//external:swift-collections.BUILD",
     commit = "9bf03ff58ce34478e66aaee630e491823326fd06",
     remote = "https://github.com/apple/swift-collections.git",
     shallow_since = "1724118356 -0700",
@@ -164,7 +164,7 @@ new_git_repository(
 
 new_git_repository(
     name = "SwiftCollectionsForGRPC2",
-    build_file = "swift-collections-grpc2.BUILD",
+    build_file = "//external:swift-collections-grpc2.BUILD",
     commit = "9bf03ff58ce34478e66aaee630e491823326fd06",
     remote = "https://github.com/apple/swift-collections.git",
     shallow_since = "1724118356 -0700",
@@ -188,10 +188,10 @@ new_git_repository(
 
 new_git_repository(
     name = "SwiftProtobuf",
-    build_file = "swift-protobuf.BUILD",
-    commit = "d57a5aecf24a25b32ec4a74be2f5d0a995a47c4b",
+    build_file = "//external:swift-protobuf-grpc2.BUILD",
+    commit = "e2ba53aa76f6c12def8fed7e1e9d857ff702d6ff",
     remote = "https://github.com/apple/swift-protobuf.git",
-    shallow_since = "1720448759 -0400",
+    shallow_since = "1728403201 +0000",
 )
 
 new_git_repository(

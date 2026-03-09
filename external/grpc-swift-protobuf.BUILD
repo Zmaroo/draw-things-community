@@ -31,7 +31,7 @@ swift_library(
     module_name = "GRPCProtobuf",
     visibility = ["//visibility:public"],
     deps = [
-        "@SwiftProtobufForGRPC2//:SwiftProtobuf",
+        "@SwiftProtobuf",
         "@grpc-swift-2//:GRPCCore",
     ],
 )
@@ -43,7 +43,7 @@ swift_library(
     module_name = "GRPCProtobufCodeGen",
     visibility = ["//visibility:public"],
     deps = [
-        "@SwiftProtobufForGRPC2//:SwiftProtobufPluginLibrary",
+        "@SwiftProtobuf//:SwiftProtobufPluginLibrary",
         "@grpc-swift-2//:GRPCCodeGen",
     ],
 )
@@ -55,8 +55,8 @@ swift_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":GRPCProtobufCodeGen",
-        "@SwiftProtobufForGRPC2//:SwiftProtobuf",
-        "@SwiftProtobufForGRPC2//:SwiftProtobufPluginLibrary",
+        "@SwiftProtobuf",
+        "@SwiftProtobuf//:SwiftProtobufPluginLibrary",
         "@grpc-swift-2//:GRPCCodeGen",
     ],
 )

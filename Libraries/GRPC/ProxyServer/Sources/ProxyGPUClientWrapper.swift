@@ -2,6 +2,7 @@ import BinaryResources
 import Foundation
 import GRPC
 import GRPCImageServiceModels
+import GRPCLegacyCompat
 import Logging
 import NIO
 import NIOSSL

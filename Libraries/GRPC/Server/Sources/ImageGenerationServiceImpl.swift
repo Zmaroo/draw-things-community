@@ -5,6 +5,7 @@ import Diffusion
 import Foundation
 import GRPC
 import GRPCImageServiceModels
+import GRPCLegacyCompat
 import ImageGenerator
 import Logging
 import ModelZoo
@@ -154,11 +155,11 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     -> RequestedImageResponseFormat
   {
     switch responseFormat {
-    case .responseFormatUnspecified, .responseFormatTensor, .UNRECOGNIZED:
+    case .unspecified, .UNRECOGNIZED:
       return .tensor
-    case .responseFormatPng:
+    case .png:
       return .png
-    case .responseFormatJpeg:
+    case .jpeg:
       return .jpeg
     }
   }
@@ -168,10 +169,10 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
   {
     let baseFormat = requestedImageResponseFormat(from: request.responseFormat)
     let previewFormat: RequestedImageResponseFormat =
-      request.previewResponseFormat == .responseFormatUnspecified
+      request.previewResponseFormat == .unspecified
       ? baseFormat : requestedImageResponseFormat(from: request.previewResponseFormat)
     let finalFormat: RequestedImageResponseFormat =
-      request.finalResponseFormat == .responseFormatUnspecified
+      request.finalResponseFormat == .unspecified
       ? baseFormat : requestedImageResponseFormat(from: request.finalResponseFormat)
     return (preview: previewFormat, final: finalFormat)
   }
@@ -180,11 +181,11 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
   {
     switch payloadType {
     case .tensor:
-      return .responsePayloadTypeTensor
+      return .tensor
     case .png:
-      return .responsePayloadTypePng
+      return .png
     case .jpeg:
-      return .responsePayloadTypeJpeg
+      return .jpeg
     }
   }
 
@@ -525,7 +526,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     }
     let chunked = request.chunked
     let requestedFormats = requestedImageResponseFormats(from: request)
-    let previewEveryNSteps = request.previewEveryNSteps
+    let previewEveryNSteps = request.previewEveryNsteps
     logger.info(
       "Requested response formats: preview=\(String(describing: requestedFormats.preview)), final=\(String(describing: requestedFormats.final)), previewEveryNSteps=\(previewEveryNSteps)"
     )

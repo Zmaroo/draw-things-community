@@ -6,6 +6,7 @@ swift_library(
         "Sources/InternalCollectionsUtilities/**/*.swift",
     ]),
     module_name = "InternalCollectionsUtilities",
+    visibility = ["//visibility:public"],
 )
 
 swift_library(
@@ -25,6 +26,7 @@ swift_library(
         "Sources/DequeModule/**/*.swift",
     ]),
     module_name = "DequeModule",
+    visibility = ["//visibility:public"],
     deps = [
         ":InternalCollectionsUtilities",
     ],

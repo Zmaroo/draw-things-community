@@ -57,6 +57,7 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         ":GRPCImageServiceModels",
+        ":GRPCLegacyCompat",
         ":ServerConfigurationRewriter",
         "//Libraries/BinaryResources",
         "//Libraries/DataModels",
@@ -71,6 +72,7 @@ swift_library(
         "@SwiftCrypto//:Crypto",
         "@SwiftCrypto//:CryptoBoringWrapper",
         "@SwiftLog//:Logging",
+        "@grpc-swift//:GRPC",
         "@s4nnc//nnc",
     ] + select({
         ":ios_or_macos_build": [
@@ -105,6 +107,7 @@ swift_library(
     deps = [
         ":GRPCControlPanelModels",
         ":GRPCImageServiceModels",
+        ":GRPCLegacyCompat",
         "//Libraries/BinaryResources",
         "//Libraries/DataModels",
         "//Libraries/ModelZoo",
@@ -114,6 +117,7 @@ swift_library(
         "@SwiftCrypto//:Crypto",
         "@SwiftCrypto//:CryptoBoringWrapper",
         "@SwiftLog//:Logging",
+        "@grpc-swift//:GRPC",
     ],
 )
 
@@ -127,6 +131,7 @@ swift_library(
     deps = [
         ":GRPCControlPanelModels",
         ":GRPCImageServiceModels",
+        ":GRPCLegacyCompat",
         "//Libraries/BinaryResources",
         "//Libraries/DataModels",
         "//Libraries/ModelZoo",
@@ -136,6 +141,7 @@ swift_library(
         "@SwiftCrypto//:Crypto",
         "@SwiftCrypto//:CryptoBoringWrapper",
         "@SwiftLog//:Logging",
+        "@grpc-swift//:GRPC",
     ],
 )
 
@@ -147,6 +153,18 @@ swift_library(
     deps = [
         "@grpc-swift-2//:GRPCCore",
         "@grpc-swift-protobuf//:GRPCProtobuf",
+    ],
+)
+
+swift_library(
+    name = "GRPCLegacyCompat",
+    srcs = glob(["LegacyCompat/Sources/*.swift"]),
+    module_name = "GRPCLegacyCompat",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":GRPCControlPanelModels",
+        ":GRPCImageServiceModels",
+        "@grpc-swift//:GRPC",
     ],
 )
 

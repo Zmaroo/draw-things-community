@@ -2,6 +2,7 @@ import BinaryResources
 import Foundation
 import GRPC
 import GRPCControlPanelModels
+import GRPCLegacyCompat
 import NIO
 import NIOSSL
 
