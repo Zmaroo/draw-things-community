@@ -69,6 +69,13 @@ Client integration notes:
 
 See also: `Libraries/GRPC/Models/CLIENT_COMPATIBILITY.md`.
 
+grpc-swift-2 migration status:
+
+- Generated model stubs are on grpc-swift-2 tooling.
+- Runtime currently uses a temporary compatibility bridge at `Libraries/GRPC/LegacyCompat`.
+- Final cleanup/removal tasks are tracked in:
+  `Libraries/GRPC/Models/GRPC_SWIFT_2_PHASE3_CHECKLIST.md`.
+
 To regenerate gRPC Swift model sources from proto definitions, run:
 
 ```bash

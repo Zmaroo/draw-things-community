@@ -36,3 +36,16 @@ The new grpc-swift-2 stack uses availability macros mapped to:
 - visionOS 2.0
 
 If older deployment targets are required, this migration cannot be completed as-is.
+
+## Current transitional state
+
+The repository currently uses a temporary bridge module:
+
+- `Libraries/GRPC/LegacyCompat`
+
+This is an intentional transitional layer to keep existing runtime behavior while
+moving generated models and Bazel externals to grpc-swift-2.
+
+For bridge removal and full runtime migration, follow:
+
+- `Libraries/GRPC/Models/GRPC_SWIFT_2_PHASE3_CHECKLIST.md`
