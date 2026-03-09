@@ -38,6 +38,33 @@ For external (non-tensor) clients using gRPC image generation, set
 `ImageGenerationRequest.responseFormat = RESPONSE_FORMAT_PNG`.
 If `responseFormat` is omitted, the server defaults to tensor payloads for backward compatibility.
 
+For newer clients, prefer split output controls:
+
+- `previewResponseFormat`
+- `finalResponseFormat`
+- `previewEveryNSteps`
+
+Backward compatibility behavior:
+
+- Legacy `responseFormat` is still accepted.
+- If split fields are omitted, server falls back to the legacy field.
+- If everything is omitted, server defaults to tensor payloads.
+
+Client integration notes:
+
+- `previewImage` is emitted as a single payload per update.
+- `generatedImages` may be chunked; reassemble using `chunkState`.
+- Prefer `previewPayloadType` / `finalPayloadType` when decoding payload bytes.
+- Keep a PNG/JPEG fallback decode path for mixed-version deployments.
+
+See also: `Libraries/GRPC/Models/CLIENT_COMPATIBILITY.md`.
+
+To regenerate gRPC Swift model sources from proto definitions, run:
+
+```bash
+./Scripts/GRPC/generate_models.sh
+```
+
 # Self-host gRPCServerCLI from Packaged Binaries
 
 We provide pre-built self-hosted gRPCServerCLI binaries through this repository. Latest version should be available at [Releases](https://github.com/drawthingsai/draw-things-community/releases).

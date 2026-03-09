@@ -84,6 +84,7 @@ swift_library(
 swift_test(
     name = "GRPCServerResponseEncodingTests",
     srcs = [
+        "Tests/GRPCProtocolCompatibilityTests.swift",
         "Tests/ImageResponseEncoderTests.swift",
     ],
     deps = [
