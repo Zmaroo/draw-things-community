@@ -150,16 +150,52 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     logger.info("ImageGenerationServiceImpl init")
   }
 
-  private func requestedImageResponseFormat(from request: ImageGenerationRequest)
+  private func requestedImageResponseFormat(from responseFormat: ResponseFormat)
     -> RequestedImageResponseFormat
   {
-    switch request.responseFormat {
+    switch responseFormat {
+    case .responseFormatUnspecified, .responseFormatTensor, .UNRECOGNIZED:
+      return .tensor
     case .responseFormatPng:
       return .png
     case .responseFormatJpeg:
       return .jpeg
-    case .responseFormatTensor, .UNRECOGNIZED:
-      return .tensor
+    }
+  }
+
+  private func requestedImageResponseFormats(from request: ImageGenerationRequest)
+    -> (preview: RequestedImageResponseFormat, final: RequestedImageResponseFormat)
+  {
+    let baseFormat = requestedImageResponseFormat(from: request.responseFormat)
+    let previewFormat: RequestedImageResponseFormat =
+      request.previewResponseFormat == .responseFormatUnspecified
+      ? baseFormat : requestedImageResponseFormat(from: request.previewResponseFormat)
+    let finalFormat: RequestedImageResponseFormat =
+      request.finalResponseFormat == .responseFormatUnspecified
+      ? baseFormat : requestedImageResponseFormat(from: request.finalResponseFormat)
+    return (preview: previewFormat, final: finalFormat)
+  }
+
+  private func responsePayloadType(from payloadType: EncodedImagePayloadType) -> ResponsePayloadType
+  {
+    switch payloadType {
+    case .tensor:
+      return .responsePayloadTypeTensor
+    case .png:
+      return .responsePayloadTypePng
+    case .jpeg:
+      return .responsePayloadTypeJpeg
+    }
+  }
+
+  private func shouldEmitPreview(signpost: ImageGeneratorSignpost, everyNSteps: UInt32) -> Bool {
+    guard everyNSteps > 1 else { return true }
+    let interval = Int(everyNSteps)
+    switch signpost {
+    case .sampling(let step), .secondPassSampling(let step):
+      return step % interval == 0
+    default:
+      return false
     }
   }
 
@@ -401,8 +437,11 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       UpscalerZoo.overrideMapping = [:]
     }
     let chunked = request.chunked
-    let requestedFormat = requestedImageResponseFormat(from: request)
-    logger.info("Requested response format: \(String(describing: requestedFormat))")
+    let requestedFormats = requestedImageResponseFormats(from: request)
+    let previewEveryNSteps = request.previewEveryNSteps
+    logger.info(
+      "Requested response formats: preview=\(String(describing: requestedFormats.preview)), final=\(String(describing: requestedFormats.final)), previewEveryNSteps=\(previewEveryNSteps)"
+    )
 
     let progressUpdateHandler:
       (ImageGeneratorSignpost, Set<ImageGeneratorSignpost>, Tensor<FloatType>?) -> Bool = {
@@ -424,11 +463,13 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
             })
 
           if let previewTensor = previewTensor,
+            self.shouldEmitPreview(signpost: signpost, everyNSteps: previewEveryNSteps),
             let encodedPreview = ImageResponseEncoder.encodePreviewImage(
-              from: previewTensor, responseFormat: requestedFormat,
+              from: previewTensor, responseFormat: requestedFormats.preview,
               responseCompression: responseCompression)
           {
             $0.previewImage = encodedPreview.payload
+            $0.previewPayloadType = self.responsePayloadType(from: encodedPreview.payloadType)
           }
         }
 
@@ -520,9 +561,10 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       successFlag.store(true, ordering: .releasing)
 
       let encodedImages = ImageResponseEncoder.encodeImages(
-        from: images, responseFormat: requestedFormat,
+        from: images, responseFormat: requestedFormats.final,
         responseCompression: responseCompression)
       let imageDatas = encodedImages.payloads
+      let finalPayloadType = responsePayloadType(from: encodedImages.payloadType)
       let audioCodec: DynamicGraph.Store.Codec = responseCompression ? [.zip, .fpzip] : []
       let audioData = audio?.compactMap { $0.data(using: audioCodec) }
       logger.info("Image processed")
@@ -571,6 +613,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
                 $0.generatedImages = [chunk]
                 $0.scaleFactor = Int32(scaleFactor)
                 $0.chunkState = index == chunks.count - 1 ? .lastChunk : .moreChunks
+                $0.finalPayloadType = finalPayloadType
               }
               context.sendResponse(finalResponse, promise: nil)
             }
@@ -581,6 +624,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
               $0.generatedImages = [imageData]
               $0.scaleFactor = Int32(scaleFactor)
               $0.chunkState = .lastChunk
+              $0.finalPayloadType = finalPayloadType
             }
             context.sendResponse(finalResponse, promise: nil)
           }

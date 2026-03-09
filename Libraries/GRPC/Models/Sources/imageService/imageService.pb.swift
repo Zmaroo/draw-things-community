@@ -61,18 +61,19 @@ public enum DeviceType: SwiftProtobuf.Enum, Swift.CaseIterable {
 
 public enum ResponseFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
+  case responseFormatUnspecified // = 0
   case responseFormatTensor // = 0
   case responseFormatPng // = 1
   case responseFormatJpeg // = 2
   case UNRECOGNIZED(Int)
 
   public init() {
-    self = .responseFormatTensor
+    self = .responseFormatUnspecified
   }
 
   public init?(rawValue: Int) {
     switch rawValue {
-    case 0: self = .responseFormatTensor
+    case 0: self = .responseFormatUnspecified
     case 1: self = .responseFormatPng
     case 2: self = .responseFormatJpeg
     default: self = .UNRECOGNIZED(rawValue)
@@ -81,6 +82,7 @@ public enum ResponseFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
 
   public var rawValue: Int {
     switch self {
+    case .responseFormatUnspecified: return 0
     case .responseFormatTensor: return 0
     case .responseFormatPng: return 1
     case .responseFormatJpeg: return 2
@@ -90,11 +92,52 @@ public enum ResponseFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
 
   // The compiler won't synthesize support with the UNRECOGNIZED case.
   public static let allCases: [ResponseFormat] = [
+    .responseFormatUnspecified,
     .responseFormatTensor,
     .responseFormatPng,
     .responseFormatJpeg,
   ]
 
+}
+
+public enum ResponsePayloadType: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case responsePayloadTypeUnspecified // = 0
+  case responsePayloadTypeTensor // = 1
+  case responsePayloadTypePng // = 2
+  case responsePayloadTypeJpeg // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .responsePayloadTypeUnspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .responsePayloadTypeUnspecified
+    case 1: self = .responsePayloadTypeTensor
+    case 2: self = .responsePayloadTypePng
+    case 3: self = .responsePayloadTypeJpeg
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .responsePayloadTypeUnspecified: return 0
+    case .responsePayloadTypeTensor: return 1
+    case .responsePayloadTypePng: return 2
+    case .responsePayloadTypeJpeg: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  public static let allCases: [ResponsePayloadType] = [
+    .responsePayloadTypeUnspecified,
+    .responsePayloadTypeTensor,
+    .responsePayloadTypePng,
+    .responsePayloadTypeJpeg,
+  ]
 }
 
 public enum ChunkState: SwiftProtobuf.Enum, Swift.CaseIterable {
@@ -383,6 +426,21 @@ public struct ImageGenerationRequest: @unchecked Sendable {
   public var responseFormat: ResponseFormat {
     get {return _storage._responseFormat}
     set {_uniqueStorage()._responseFormat = newValue}
+  }
+
+  public var previewResponseFormat: ResponseFormat {
+    get {return _storage._previewResponseFormat}
+    set {_uniqueStorage()._previewResponseFormat = newValue}
+  }
+
+  public var finalResponseFormat: ResponseFormat {
+    get {return _storage._finalResponseFormat}
+    set {_uniqueStorage()._finalResponseFormat = newValue}
+  }
+
+  public var previewEveryNSteps: UInt32 {
+    get {return _storage._previewEveryNSteps}
+    set {_uniqueStorage()._previewEveryNSteps = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -706,6 +764,12 @@ public struct ImageGenerationResponse: @unchecked Sendable {
   /// Generated audio data as bytes.
   public var generatedAudio: [Data] = []
 
+  /// Type for previewImage payload.
+  public var previewPayloadType: ResponsePayloadType = .responsePayloadTypeUnspecified
+
+  /// Type for generatedImages payload.
+  public var finalPayloadType: ResponsePayloadType = .responsePayloadTypeUnspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -891,9 +955,18 @@ extension DeviceType: SwiftProtobuf._ProtoNameProviding {
 
 extension ResponseFormat: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    0: .same(proto: "RESPONSE_FORMAT_TENSOR"),
+    0: .same(proto: "RESPONSE_FORMAT_UNSPECIFIED"),
     1: .same(proto: "RESPONSE_FORMAT_PNG"),
     2: .same(proto: "RESPONSE_FORMAT_JPEG"),
+  ]
+}
+
+extension ResponsePayloadType: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
+    0: .same(proto: "RESPONSE_PAYLOAD_TYPE_UNSPECIFIED"),
+    1: .same(proto: "RESPONSE_PAYLOAD_TYPE_TENSOR"),
+    2: .same(proto: "RESPONSE_PAYLOAD_TYPE_PNG"),
+    3: .same(proto: "RESPONSE_PAYLOAD_TYPE_JPEG"),
   ]
 }
 
@@ -1222,6 +1295,9 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
     13: .same(proto: "sharedSecret"),
     14: .same(proto: "chunked"),
     15: .same(proto: "responseFormat"),
+    16: .same(proto: "previewResponseFormat"),
+    17: .same(proto: "finalResponseFormat"),
+    18: .same(proto: "previewEveryNSteps"),
   ]
 
   fileprivate class _StorageClass {
@@ -1239,7 +1315,10 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
     var _contents: [Data] = []
     var _sharedSecret: String? = nil
     var _chunked: Bool = false
-    var _responseFormat: ResponseFormat = .responseFormatTensor
+    var _responseFormat: ResponseFormat = .responseFormatUnspecified
+    var _previewResponseFormat: ResponseFormat = .responseFormatUnspecified
+    var _finalResponseFormat: ResponseFormat = .responseFormatUnspecified
+    var _previewEveryNSteps: UInt32 = 0
 
     #if swift(>=5.10)
       // This property is used as the initial default value for new instances of the type.
@@ -1269,6 +1348,9 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
       _sharedSecret = source._sharedSecret
       _chunked = source._chunked
       _responseFormat = source._responseFormat
+      _previewResponseFormat = source._previewResponseFormat
+      _finalResponseFormat = source._finalResponseFormat
+      _previewEveryNSteps = source._previewEveryNSteps
     }
   }
 
@@ -1302,6 +1384,9 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
         case 13: try { try decoder.decodeSingularStringField(value: &_storage._sharedSecret) }()
         case 14: try { try decoder.decodeSingularBoolField(value: &_storage._chunked) }()
         case 15: try { try decoder.decodeSingularEnumField(value: &_storage._responseFormat) }()
+        case 16: try { try decoder.decodeSingularEnumField(value: &_storage._previewResponseFormat) }()
+        case 17: try { try decoder.decodeSingularEnumField(value: &_storage._finalResponseFormat) }()
+        case 18: try { try decoder.decodeSingularUInt32Field(value: &_storage._previewEveryNSteps) }()
         default: break
         }
       }
@@ -1356,8 +1441,17 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
       if _storage._chunked != false {
         try visitor.visitSingularBoolField(value: _storage._chunked, fieldNumber: 14)
       }
-      if _storage._responseFormat != .responseFormatTensor {
+      if _storage._responseFormat != .responseFormatUnspecified {
         try visitor.visitSingularEnumField(value: _storage._responseFormat, fieldNumber: 15)
+      }
+      if _storage._previewResponseFormat != .responseFormatUnspecified {
+        try visitor.visitSingularEnumField(value: _storage._previewResponseFormat, fieldNumber: 16)
+      }
+      if _storage._finalResponseFormat != .responseFormatUnspecified {
+        try visitor.visitSingularEnumField(value: _storage._finalResponseFormat, fieldNumber: 17)
+      }
+      if _storage._previewEveryNSteps != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._previewEveryNSteps, fieldNumber: 18)
       }
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -1383,6 +1477,9 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
         if _storage._sharedSecret != rhs_storage._sharedSecret {return false}
         if _storage._chunked != rhs_storage._chunked {return false}
         if _storage._responseFormat != rhs_storage._responseFormat {return false}
+        if _storage._previewResponseFormat != rhs_storage._previewResponseFormat {return false}
+        if _storage._finalResponseFormat != rhs_storage._finalResponseFormat {return false}
+        if _storage._previewEveryNSteps != rhs_storage._previewEveryNSteps {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -1930,6 +2027,8 @@ extension ImageGenerationResponse: SwiftProtobuf.Message, SwiftProtobuf._Message
     8: .same(proto: "chunkState"),
     9: .same(proto: "remoteDownload"),
     10: .same(proto: "generatedAudio"),
+    11: .same(proto: "previewPayloadType"),
+    12: .same(proto: "finalPayloadType"),
   ]
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -1948,6 +2047,8 @@ extension ImageGenerationResponse: SwiftProtobuf.Message, SwiftProtobuf._Message
       case 8: try { try decoder.decodeSingularEnumField(value: &self.chunkState) }()
       case 9: try { try decoder.decodeSingularMessageField(value: &self._remoteDownload) }()
       case 10: try { try decoder.decodeRepeatedBytesField(value: &self.generatedAudio) }()
+      case 11: try { try decoder.decodeSingularEnumField(value: &self.previewPayloadType) }()
+      case 12: try { try decoder.decodeSingularEnumField(value: &self.finalPayloadType) }()
       default: break
       }
     }
@@ -1988,6 +2089,12 @@ extension ImageGenerationResponse: SwiftProtobuf.Message, SwiftProtobuf._Message
     if !self.generatedAudio.isEmpty {
       try visitor.visitRepeatedBytesField(value: self.generatedAudio, fieldNumber: 10)
     }
+    if self.previewPayloadType != .responsePayloadTypeUnspecified {
+      try visitor.visitSingularEnumField(value: self.previewPayloadType, fieldNumber: 11)
+    }
+    if self.finalPayloadType != .responsePayloadTypeUnspecified {
+      try visitor.visitSingularEnumField(value: self.finalPayloadType, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2002,6 +2109,8 @@ extension ImageGenerationResponse: SwiftProtobuf.Message, SwiftProtobuf._Message
     if lhs.chunkState != rhs.chunkState {return false}
     if lhs._remoteDownload != rhs._remoteDownload {return false}
     if lhs.generatedAudio != rhs.generatedAudio {return false}
+    if lhs.previewPayloadType != rhs.previewPayloadType {return false}
+    if lhs.finalPayloadType != rhs.finalPayloadType {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

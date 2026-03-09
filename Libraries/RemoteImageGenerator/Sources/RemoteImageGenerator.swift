@@ -180,6 +180,8 @@ public struct RemoteImageGenerator: ImageGenerator {
     request.device = DeviceType(from: deviceType)
     request.chunked = true
     request.responseFormat = .responseFormatPng
+    request.previewResponseFormat = .responseFormatPng
+    request.finalResponseFormat = .responseFormatPng
     if let sharedSecret = sharedSecret {
       request.sharedSecret = sharedSecret
     }
@@ -294,13 +296,23 @@ public struct RemoteImageGenerator: ImageGenerator {
             } else {
               imageData = generatedImageData
             }
-            if let image = Tensor<FloatType>(data: imageData, using: [.zip, .fpzip]) {
-              return Tensor<FloatType>(from: image)
-            } else if let image = tensorFromEncodedImageData(imageData) {
-              return image
-            } else {
-              return nil
+            switch response.finalPayloadType {
+            case .responsePayloadTypeTensor:
+              if let image = Tensor<FloatType>(data: imageData, using: [.zip, .fpzip]) {
+                return Tensor<FloatType>(from: image)
+              }
+            case .responsePayloadTypePng, .responsePayloadTypeJpeg:
+              if let image = tensorFromEncodedImageData(imageData) {
+                return image
+              }
+            case .responsePayloadTypeUnspecified, .UNRECOGNIZED:
+              if let image = Tensor<FloatType>(data: imageData, using: [.zip, .fpzip]) {
+                return Tensor<FloatType>(from: image)
+              } else if let image = tensorFromEncodedImageData(imageData) {
+                return image
+              }
             }
+            return nil
           }
           lastChunk = Data()
         case .moreChunks:
@@ -356,15 +368,21 @@ public struct RemoteImageGenerator: ImageGenerator {
             ImageGeneratorSignpost(from: signpostProto)
           })
         var previewTensor: Tensor<FloatType>? = nil
-        if response.hasPreviewImage,
-          let tensor = Tensor<FloatType>(
-            data: response.previewImage, using: [.zip, .fpzip])
-        {
-          previewTensor = Tensor<FloatType>(from: tensor)  // This force to convert the tensor into existing type.
-        } else if response.hasPreviewImage,
-          let image = tensorFromEncodedImageData(response.previewImage)
-        {
-          previewTensor = image
+        if response.hasPreviewImage {
+          switch response.previewPayloadType {
+          case .responsePayloadTypeTensor:
+            if let tensor = Tensor<FloatType>(data: response.previewImage, using: [.zip, .fpzip]) {
+              previewTensor = Tensor<FloatType>(from: tensor)  // This force to convert the tensor into existing type.
+            }
+          case .responsePayloadTypePng, .responsePayloadTypeJpeg:
+            previewTensor = tensorFromEncodedImageData(response.previewImage)
+          case .responsePayloadTypeUnspecified, .UNRECOGNIZED:
+            if let tensor = Tensor<FloatType>(data: response.previewImage, using: [.zip, .fpzip]) {
+              previewTensor = Tensor<FloatType>(from: tensor)  // This force to convert the tensor into existing type.
+            } else {
+              previewTensor = tensorFromEncodedImageData(response.previewImage)
+            }
+          }
         }
         let isGenerating = feedback(currentSignpost, signpostsSet, previewTensor)
         if !isGenerating {

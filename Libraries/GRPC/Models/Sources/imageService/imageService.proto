@@ -57,9 +57,18 @@ enum DeviceType {
 }
 
 enum ResponseFormat {
+  option allow_alias = true;
+  RESPONSE_FORMAT_UNSPECIFIED = 0;
   RESPONSE_FORMAT_TENSOR = 0;
   RESPONSE_FORMAT_PNG = 1;
   RESPONSE_FORMAT_JPEG = 2;
+}
+
+enum ResponsePayloadType {
+  RESPONSE_PAYLOAD_TYPE_UNSPECIFIED = 0;
+  RESPONSE_PAYLOAD_TYPE_TENSOR = 1;
+  RESPONSE_PAYLOAD_TYPE_PNG = 2;
+  RESPONSE_PAYLOAD_TYPE_JPEG = 3;
 }
 
 // parameters in this Request is exactly same as generate function in ImageGenerator
@@ -78,7 +87,10 @@ message ImageGenerationRequest {
   repeated bytes contents = 12; // The image data as array of bytes. It is addressed by its sha256 content. This is modeled as content-addressable storage.
   optional string sharedSecret = 13; // The secret use to authenticate if needed.
   bool chunked = 14; // Whether we can accept chunked response.
-  ResponseFormat responseFormat = 15;
+  ResponseFormat responseFormat = 15; // Legacy format selector used for preview and final if split fields are unset.
+  ResponseFormat previewResponseFormat = 16; // Optional preview-only format selector.
+  ResponseFormat finalResponseFormat = 17; // Optional final-only format selector.
+  uint32 previewEveryNSteps = 18; // Optional preview cadence; 0 means every step.
 }
 
 message HintProto {
@@ -150,6 +162,8 @@ message ImageGenerationResponse {
   ChunkState chunkState = 8; // What's this chunk is, it helps to compose the chunks together.
   optional RemoteDownloadResponse remoteDownload = 9; // If the remote needs to download something, which are they.
   repeated bytes generatedAudio = 10;      // Generated audio data as bytes.
+  ResponsePayloadType previewPayloadType = 11; // Type for previewImage payload.
+  ResponsePayloadType finalPayloadType = 12; // Type for generatedImages payload.
 }
 
 message FileChunk {
