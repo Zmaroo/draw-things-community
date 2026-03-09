@@ -1,11 +1,11 @@
 # grpc-swift-2 Phase 3 Checklist (Remove Legacy Bridge)
 
-This checklist tracks the final migration from mixed runtime (grpc-swift v1 + grpc-swift-2) to pure grpc-swift-2.
+This checklist tracked the final migration from mixed runtime (grpc-swift v1 + grpc-swift-2) to pure grpc-swift-2.
 
 ## Current state
 
 - `protoc-gen-grpc-swift-2` generated stubs are in use.
-- Runtime still uses `import GRPC` APIs via `GRPCLegacyCompat` shims.
+- `GRPCLegacyCompat` shims are removed.
 - `//Apps:gRPCServerCLI` builds and `//Libraries/GRPC:GRPCServerResponseEncodingTests` passes.
 
 ## Goal
@@ -41,13 +41,13 @@ This checklist tracks the final migration from mixed runtime (grpc-swift v1 + gr
 - Replace legacy `*ServerInterceptorFactoryProtocol` usage with grpc-swift-2 middleware/interceptor model.
 - Ensure request ID and tracing tags remain available.
 
-7. Delete compatibility layer
-- Remove `Libraries/GRPC/LegacyCompat/Sources/*`.
-- Remove `GRPCLegacyCompat` target from `Libraries/GRPC/BUILD`.
-- Remove `import GRPCLegacyCompat` in runtime sources.
+7. Delete compatibility layer (completed)
+- Removed `Libraries/GRPC/LegacyCompat/Sources/*`.
+- Removed `GRPCLegacyCompat` target from `Libraries/GRPC/BUILD`.
+- Removed runtime usage of `GRPCLegacyCompat`.
 
-8. Remove grpc-swift v1 runtime dependency
-- Remove `@grpc-swift//:GRPC` from runtime targets once no legacy APIs remain.
+8. Remove grpc-swift v1 runtime dependency (completed)
+- Removed `@grpc-swift//:GRPC` from runtime Bazel targets.
 - Keep v1 plugin only if still needed for any generation path; otherwise remove.
 
 9. Validate

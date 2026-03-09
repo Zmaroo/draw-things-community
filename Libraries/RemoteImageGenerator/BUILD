@@ -9,6 +9,5 @@ swift_library(
         "//Libraries/GRPC:GRPCImageServiceModels",
         "//Libraries/GRPC:GRPCServer",
         "//Libraries/ImageGenerator",
-        "@grpc-swift//:GRPC",
     ],
 )

@@ -1,6 +1,6 @@
 # grpc-swift-2 Migration Notes
 
-This repository currently uses grpc-swift v1 runtime (`import GRPC`) in server/client code.
+This document describes the migration that moved runtime server/client code off grpc-swift v1 (`import GRPC`) to grpc-swift-2.
 
 `protoc-gen-grpc-swift-2` generates stubs that use:
 
@@ -37,15 +37,7 @@ The new grpc-swift-2 stack uses availability macros mapped to:
 
 If older deployment targets are required, this migration cannot be completed as-is.
 
-## Current transitional state
+## Status
 
-The repository currently uses a temporary bridge module:
-
-- `Libraries/GRPC/LegacyCompat`
-
-This is an intentional transitional layer to keep existing runtime behavior while
-moving generated models and Bazel externals to grpc-swift-2.
-
-For bridge removal and full runtime migration, follow:
-
-- `Libraries/GRPC/Models/GRPC_SWIFT_2_PHASE3_CHECKLIST.md`
+Runtime migration to grpc-swift-2 is complete for active GRPC Bazel targets.
+`LegacyCompat` has been removed from runtime build wiring.

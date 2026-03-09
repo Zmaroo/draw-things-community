@@ -42,7 +42,6 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.23.1"),
     .package(url: "https://github.com/jagreenwood/swift-log-datadog.git", from: "0.3.0"),
 
-    .package(url: "https://github.com/grpc/grpc-swift.git", from: "1.16.0"),
     .package(
       url: "https://github.com/grpc/grpc-swift-2.git",
       revision: "703b1427ed221ac4d051d4aa611f6841fbae9ee8"),
@@ -398,19 +397,9 @@ let package = Package(
     .target(
       name: "ServerConfigurationRewriter",
       dependencies: [
-        "DataModels",
-        .product(name: "GRPC", package: "grpc-swift"),
+        "DataModels"
       ],
       path: "Libraries/GRPC/ServerConfigurationRewriter/Sources"
-    ),
-    .target(
-      name: "GRPCLegacyCompat",
-      dependencies: [
-        "GRPCImageServiceModels",
-        "GRPCControlPanelModels",
-        .product(name: "GRPC", package: "grpc-swift"),
-      ],
-      path: "Libraries/GRPC/LegacyCompat/Sources"
     ),
     .target(
       name: "GRPCServer",
@@ -467,7 +456,6 @@ let package = Package(
         "ModelZoo",
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "Logging", package: "swift-log"),
-        .product(name: "GRPC", package: "grpc-swift"),
       ],
       path: "Libraries/GRPC/ServerLoRALoader/Sources"
     ),
