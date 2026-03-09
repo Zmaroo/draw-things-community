@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import GRPCImageServiceModels
+@testable import GRPCServer
 
 final class GRPCProtocolCompatibilityTests: XCTestCase {
   private func reassembleGeneratedImages(from responses: [ImageGenerationResponse]) -> [Data] {
@@ -91,5 +92,15 @@ final class GRPCProtocolCompatibilityTests: XCTestCase {
     let payloads = reassembleGeneratedImages(from: [more, last])
     XCTAssertEqual(payloads.count, 1)
     XCTAssertEqual(payloads[0], Data([0x01, 0x02, 0x03, 0x04]))
+  }
+
+  func testEchoCapabilitiesDescriptorIncludesExpectedKeys() {
+    let descriptor = ImageGenerationServiceImpl.grpcCapabilities(enableModelBrowsing: true)
+    XCTAssertTrue(descriptor.contains("protocol_version=2"))
+    XCTAssertTrue(descriptor.contains("split_response_formats=true"))
+    XCTAssertTrue(descriptor.contains("payload_type_fields=true"))
+    XCTAssertTrue(descriptor.contains("preview_single_payload=true"))
+    XCTAssertTrue(descriptor.contains("default_response=tensor"))
+    XCTAssertTrue(descriptor.contains("model_browsing=true"))
   }
 }

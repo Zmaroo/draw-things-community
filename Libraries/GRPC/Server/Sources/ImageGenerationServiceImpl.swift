@@ -199,6 +199,20 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     }
   }
 
+  static func grpcCapabilities(enableModelBrowsing: Bool) -> String {
+    let values: [(String, String)] = [
+      ("protocol_version", "2"),
+      ("legacy_response_format", "true"),
+      ("split_response_formats", "true"),
+      ("payload_type_fields", "true"),
+      ("chunked_generated_images", "true"),
+      ("preview_single_payload", "true"),
+      ("default_response", "tensor"),
+      ("model_browsing", enableModelBrowsing ? "true" : "false"),
+    ]
+    return values.map { "\($0.0)=\($0.1)" }.joined(separator: ";")
+  }
+
   private func validateGenerationRequest(
     configuration: GenerationConfiguration, modelOverrides: [ModelZoo.Specification]
   ) throws {
@@ -757,7 +771,8 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       }
       $0.serverIdentifier = serverIdentifier
       $0.sharedSecretMissing = false
-      $0.message = "HELLO \(request.name)"
+      $0.message =
+        "HELLO \(request.name)\nCAPABILITIES \(Self.grpcCapabilities(enableModelBrowsing: enableModelBrowsing))"
       if enableModelBrowsing {
         // Looking for ckpt files.
         let internalFilePath = ModelZoo.internalFilePathForModelDownloaded("")

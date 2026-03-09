@@ -56,6 +56,11 @@ Client integration notes:
 - `generatedImages` may be chunked; reassemble using `chunkState`.
 - Prefer `previewPayloadType` / `finalPayloadType` when decoding payload bytes.
 - Keep a PNG/JPEG fallback decode path for mixed-version deployments.
+- Recommended profile for external UI clients:
+  - Preview: `RESPONSE_FORMAT_JPEG`
+  - Final: `RESPONSE_FORMAT_PNG`
+- The `Echo` RPC includes a machine-readable capability summary in `EchoReply.message`
+  prefixed with `CAPABILITIES ...`.
 
 See also: `Libraries/GRPC/Models/CLIENT_COMPATIBILITY.md`.
 

@@ -2,6 +2,16 @@
 
 This note documents response-format compatibility for external Draw Things gRPC clients.
 
+## Quick compatibility matrix
+
+| Client behavior | Supported | Notes |
+| --- | --- | --- |
+| Legacy `responseFormat` only | Yes | Backward compatible path. |
+| Split `previewResponseFormat` + `finalResponseFormat` | Yes | Preferred on newer clients. |
+| `previewEveryNSteps` cadence control | Yes | Applies to sampling signposts. |
+| `previewPayloadType` / `finalPayloadType` decode-first | Yes | Recommended on mixed deployments. |
+| Chunked final payload reassembly (`chunkState`) | Yes | Required for large payloads. |
+
 ## Request format fields
 
 Preferred fields:
@@ -26,6 +36,29 @@ Fallback order used by server:
 - `generatedImages` may be chunked; use `chunkState` to reassemble.
 - Use `previewPayloadType` / `finalPayloadType` to decode bytes when present.
 - Keep PNG/JPEG fallback decoding for mixed-version clients.
+
+## Recommended format profile
+
+- Preview: JPEG (`previewResponseFormat = RESPONSE_FORMAT_JPEG`) for lower bandwidth.
+- Final: PNG (`finalResponseFormat = RESPONSE_FORMAT_PNG`) for quality-preserving output.
+- Keep payload-type-first decoding and PNG/JPEG fallback enabled.
+
+## Capability signal via Echo
+
+`EchoReply.message` includes a line prefixed with:
+
+- `CAPABILITIES key=value;key=value;...`
+
+Current keys include:
+
+- `protocol_version`
+- `legacy_response_format`
+- `split_response_formats`
+- `payload_type_fields`
+- `chunked_generated_images`
+- `preview_single_payload`
+- `default_response`
+- `model_browsing`
 
 ## Regenerating Swift models from proto
 
