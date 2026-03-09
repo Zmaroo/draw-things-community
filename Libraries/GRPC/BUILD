@@ -57,7 +57,6 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         ":GRPCImageServiceModels",
-        ":GRPCLegacyCompat",
         ":ServerConfigurationRewriter",
         "//Libraries/BinaryResources",
         "//Libraries/DataModels",
@@ -74,7 +73,6 @@ swift_library(
         "@SwiftLog//:Logging",
         "@grpc-swift-2//:GRPCCore",
         "@grpc-swift-nio-transport//:GRPCNIOTransportHTTP2",
-        "@grpc-swift//:GRPC",
         "@s4nnc//nnc",
     ] + select({
         ":ios_or_macos_build": [
@@ -133,7 +131,6 @@ swift_library(
     deps = [
         ":GRPCControlPanelModels",
         ":GRPCImageServiceModels",
-        ":GRPCLegacyCompat",
         "//Libraries/BinaryResources",
         "//Libraries/DataModels",
         "//Libraries/ModelZoo",
@@ -145,7 +142,6 @@ swift_library(
         "@SwiftLog//:Logging",
         "@grpc-swift-2//:GRPCCore",
         "@grpc-swift-nio-transport//:GRPCNIOTransportHTTP2",
-        "@grpc-swift//:GRPC",
     ],
 )
 
@@ -161,25 +157,12 @@ swift_library(
 )
 
 swift_library(
-    name = "GRPCLegacyCompat",
-    srcs = glob(["LegacyCompat/Sources/*.swift"]),
-    module_name = "GRPCLegacyCompat",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":GRPCControlPanelModels",
-        ":GRPCImageServiceModels",
-        "@grpc-swift//:GRPC",
-    ],
-)
-
-swift_library(
     name = "ServerConfigurationRewriter",
     srcs = glob(["ServerConfigurationRewriter/Sources/*.swift"]),
     module_name = "ServerConfigurationRewriter",
     visibility = ["//visibility:public"],
     deps = [
         "//Libraries/DataModels",
-        "@grpc-swift//:GRPC",
     ],
 )
 
@@ -195,7 +178,6 @@ swift_library(
         "@SwiftCrypto//:Crypto",
         "@SwiftCrypto//:CryptoBoringWrapper",
         "@SwiftLog//:Logging",
-        "@grpc-swift//:GRPC",
     ],
 )
 

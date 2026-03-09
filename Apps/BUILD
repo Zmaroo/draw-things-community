@@ -60,7 +60,6 @@ swift_library(
         "//Libraries/SwiftDiffusion",
         "//Libraries/Utils",
         "@SwiftArgumentParser//:ArgumentParser",
-        "@grpc-swift//:GRPC",
         "@swift-log-datadog//:DataDogLog",
     ],
 )
