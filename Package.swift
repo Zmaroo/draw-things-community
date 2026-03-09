@@ -357,7 +357,7 @@ let package = Package(
         "Diffusion",
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "Logging", package: "swift-log"),
-        .product(name: "GRPC", package: "grpc-swift"),
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
         .product(name: "NNC", package: "s4nnc"),
         .product(name: "Collections", package: "swift-collections"),
       ],

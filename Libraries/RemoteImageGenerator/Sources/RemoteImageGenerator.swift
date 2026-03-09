@@ -2,14 +2,12 @@ import Crypto
 import DataModels
 import Diffusion
 import Foundation
-import GRPC
+import GRPCCore
 import GRPCImageServiceModels
 import GRPCServer
 import ImageGenerator
 import Logging
 import ModelZoo
-import NIO
-import NIOHPACK
 import NNC
 import OrderedCollections
 
@@ -64,7 +62,7 @@ private func tensorFromEncodedImageData(_ data: Data) -> Tensor<FloatType>? {
 
 public enum RemoteImageGeneratorError: Error {
   case notConnected
-  case failedWithStatus(GRPCStatus)
+  case failedWithStatus(RPCError)
   case failedWithError(Error)
 }
 
@@ -87,7 +85,6 @@ public struct RemoteImageGenerator: ImageGenerator {
   public let serverIdentifier: UInt64
   public let name: String
   public let deviceType: ImageGeneratorDeviceType
-  private var fileExistsCall: UnaryCall<FileListRequest, FileExistenceResponse>? = nil
   private var authenticationHandler:
     ((Bool, Data, GenerationConfiguration, Bool, Int, (@escaping () -> Void) -> Void) -> String?)?
   private var requestExceedLimitHandler: (() -> Void)?
@@ -271,163 +268,181 @@ public struct RemoteImageGenerator: ImageGenerator {
     var lastAudioChunk = Data()
     var audios = [Tensor<Float>]()
     var scaleFactor: Int = 1
-    var call: ServerStreamingCall<ImageGenerationRequest, ImageGenerationResponse>? = nil
-    var metadata = HPACKHeaders()
+    let cancellationQueue = DispatchQueue(label: "RemoteImageGenerator.cancellation")
+    var shouldCancel = false
+    var metadata: Metadata = [:]
     if let bearer = bearer {
-      metadata.add(name: "authorization", value: "bearer \(bearer)")
+      metadata["authorization"] = "bearer \(bearer)"
     }
 
-    let callOptions = CallOptions(customMetadata: metadata)
+    let callOptions = CallOptions.defaults
+    let completionSemaphore = DispatchSemaphore(value: 0)
+    let resultQueue = DispatchQueue(label: "RemoteImageGenerator.generate.result")
+    var completionError: RemoteImageGeneratorError? = nil
 
-    let callInstance = client.generateImage(request, callOptions: callOptions) { response in
-      if response.hasRemoteDownload {
-        transferDataCallback?.remoteDownloads(
-          response.remoteDownload.bytesReceived, response.remoteDownload.bytesExpected,
-          Int(response.remoteDownload.item), Int(response.remoteDownload.itemsExpected))
-      }
-      if !response.generatedImages.isEmpty {
-        let imageTensors: [Tensor<FloatType>]
-        switch response.chunkState {
-        case .lastChunk:
-          imageTensors = response.generatedImages.enumerated().compactMap { i, generatedImageData in
-            let imageData: Data
-            if i == 0, !lastChunk.isEmpty {
-              imageData = lastChunk + generatedImageData
-            } else {
-              imageData = generatedImageData
-            }
-            switch response.finalPayloadType {
-            case .responsePayloadTypeTensor:
-              if let image = Tensor<FloatType>(data: imageData, using: [.zip, .fpzip]) {
-                return Tensor<FloatType>(from: image)
-              }
-            case .responsePayloadTypePng, .responsePayloadTypeJpeg:
-              if let image = tensorFromEncodedImageData(imageData) {
-                return image
-              }
-            case .responsePayloadTypeUnspecified, .UNRECOGNIZED:
-              if let image = Tensor<FloatType>(data: imageData, using: [.zip, .fpzip]) {
-                return Tensor<FloatType>(from: image)
-              } else if let image = tensorFromEncodedImageData(imageData) {
-                return image
-              }
-            }
-            return nil
-          }
-          lastChunk = Data()
-        case .moreChunks:
-          // There are more chunks to decode, in this case, we just simply append the chunk.
-          if let first = response.generatedImages.first {
-            lastChunk += first
-          }
-          imageTensors = []
-        case .UNRECOGNIZED(_):
-          imageTensors = []
-        }
-        logger.info("Received generated image data")
-        tensors.append(contentsOf: imageTensors)
-      }
-      if !response.generatedAudio.isEmpty {
-        let audioTensors: [Tensor<Float>]
-        switch response.chunkState {
-        case .lastChunk:
-          audioTensors = response.generatedAudio.enumerated().compactMap { i, generatedAudioData in
-            let audioData: Data
-            if i == 0, !lastAudioChunk.isEmpty {
-              audioData = lastAudioChunk + generatedAudioData
-            } else {
-              audioData = generatedAudioData
-            }
-            if let audio = Tensor<Float>(data: audioData, using: [.zip, .fpzip]) {
-              return Tensor<Float>(from: audio)
-            } else {
-              return nil
-            }
-          }
-          lastChunk = Data()
-        case .moreChunks:
-          // There are more chunks to decode, in this case, we just simply append the chunk.
-          if let first = response.generatedAudio.first {
-            lastAudioChunk += first
-          }
-          audioTensors = []
-        case .UNRECOGNIZED(_):
-          audioTensors = []
-        }
-        logger.info("Received generated image data")
-        audios.append(contentsOf: audioTensors)
-      }
-      if response.hasDownloadSize && response.downloadSize > 0 {
-        transferDataCallback?.beginDownload(Int(response.downloadSize))
-      }
-      if response.hasCurrentSignpost {
-        let currentSignpost = ImageGeneratorSignpost(
-          from: response.currentSignpost)
-        let signpostsSet = Set(
-          response.signposts.map { signpostProto in
-            ImageGeneratorSignpost(from: signpostProto)
-          })
-        var previewTensor: Tensor<FloatType>? = nil
-        if response.hasPreviewImage {
-          switch response.previewPayloadType {
-          case .responsePayloadTypeTensor:
-            if let tensor = Tensor<FloatType>(data: response.previewImage, using: [.zip, .fpzip]) {
-              previewTensor = Tensor<FloatType>(from: tensor)  // This force to convert the tensor into existing type.
-            }
-          case .responsePayloadTypePng, .responsePayloadTypeJpeg:
-            previewTensor = tensorFromEncodedImageData(response.previewImage)
-          case .responsePayloadTypeUnspecified, .UNRECOGNIZED:
-            if let tensor = Tensor<FloatType>(data: response.previewImage, using: [.zip, .fpzip]) {
-              previewTensor = Tensor<FloatType>(from: tensor)  // This force to convert the tensor into existing type.
-            } else {
-              previewTensor = tensorFromEncodedImageData(response.previewImage)
-            }
-          }
-        }
-        let isGenerating = feedback(currentSignpost, signpostsSet, previewTensor)
-        if !isGenerating {
-          logger.info("Stream cancel image generating")
-          call?.cancel(promise: nil)
-        }
-      }
-      if response.hasScaleFactor {
-        scaleFactor = Int(response.scaleFactor)
-      }
-    }
     cancellation {
-      callInstance.cancel(promise: nil)
-    }
-    call = callInstance
-
-    var unknownFailures: RemoteImageGeneratorError? = nil
-    // This is only for logging purpose, if you want to actually get the result, use the result of wait.
-    callInstance.status.whenComplete { result in
-      switch result {
-      case .success(let status):
-        switch status.code {
-        case .ok:
-          logger.info("Stream completed with status: \(status)")
-        case .cancelled:
-          logger.info("Stream cancelled with status: \(status)")
-        default:
-          logger.info("Stream failed with status: \(status)")
-          if status.code == GRPCStatus.Code.permissionDenied, let message = status.message,
-            message.contains("throttlePolicy"),
-            let requestExceedLimitHandler = requestExceedLimitHandler
-          {
-            requestExceedLimitHandler()
-          }
-          unknownFailures = .failedWithStatus(status)
-        }
-      case .failure(let error):
-        logger.error("Stream failed with error: \(error)")
-        unknownFailures = .failedWithError(error)
+      cancellationQueue.sync {
+        shouldCancel = true
       }
     }
-    let _ = try callInstance.status.wait()
-    // If no result, and there is a failure, propagate out.
-    if tensors.isEmpty, let unknownFailures {
-      throw unknownFailures
+
+    Task {
+      defer { completionSemaphore.signal() }
+      do {
+        try await client.generateImage(
+          request,
+          metadata: metadata,
+          options: callOptions
+        ) { streamingResponse in
+          for try await response in streamingResponse.messages {
+            let isCancelled = cancellationQueue.sync { shouldCancel }
+            if isCancelled {
+              throw CancellationError()
+            }
+            if response.hasRemoteDownload {
+              transferDataCallback?.remoteDownloads(
+                response.remoteDownload.bytesReceived, response.remoteDownload.bytesExpected,
+                Int(response.remoteDownload.item), Int(response.remoteDownload.itemsExpected))
+            }
+            if !response.generatedImages.isEmpty {
+              let imageTensors: [Tensor<FloatType>]
+              switch response.chunkState {
+              case .lastChunk:
+                imageTensors = response.generatedImages.enumerated().compactMap {
+                  i, generatedImageData in
+                  let imageData: Data
+                  if i == 0, !lastChunk.isEmpty {
+                    imageData = lastChunk + generatedImageData
+                  } else {
+                    imageData = generatedImageData
+                  }
+                  switch response.finalPayloadType {
+                  case .responsePayloadTypeTensor:
+                    if let image = Tensor<FloatType>(data: imageData, using: [.zip, .fpzip]) {
+                      return Tensor<FloatType>(from: image)
+                    }
+                  case .responsePayloadTypePng, .responsePayloadTypeJpeg:
+                    if let image = tensorFromEncodedImageData(imageData) {
+                      return image
+                    }
+                  case .responsePayloadTypeUnspecified, .UNRECOGNIZED:
+                    if let image = Tensor<FloatType>(data: imageData, using: [.zip, .fpzip]) {
+                      return Tensor<FloatType>(from: image)
+                    } else if let image = tensorFromEncodedImageData(imageData) {
+                      return image
+                    }
+                  }
+                  return nil
+                }
+                lastChunk = Data()
+              case .moreChunks:
+                if let first = response.generatedImages.first {
+                  lastChunk += first
+                }
+                imageTensors = []
+              case .UNRECOGNIZED(_):
+                imageTensors = []
+              }
+              logger.info("Received generated image data")
+              tensors.append(contentsOf: imageTensors)
+            }
+            if !response.generatedAudio.isEmpty {
+              let audioTensors: [Tensor<Float>]
+              switch response.chunkState {
+              case .lastChunk:
+                audioTensors = response.generatedAudio.enumerated().compactMap {
+                  i, generatedAudioData in
+                  let audioData: Data
+                  if i == 0, !lastAudioChunk.isEmpty {
+                    audioData = lastAudioChunk + generatedAudioData
+                  } else {
+                    audioData = generatedAudioData
+                  }
+                  if let audio = Tensor<Float>(data: audioData, using: [.zip, .fpzip]) {
+                    return Tensor<Float>(from: audio)
+                  } else {
+                    return nil
+                  }
+                }
+                lastAudioChunk = Data()
+              case .moreChunks:
+                if let first = response.generatedAudio.first {
+                  lastAudioChunk += first
+                }
+                audioTensors = []
+              case .UNRECOGNIZED(_):
+                audioTensors = []
+              }
+              logger.info("Received generated audio data")
+              audios.append(contentsOf: audioTensors)
+            }
+            if response.hasDownloadSize && response.downloadSize > 0 {
+              transferDataCallback?.beginDownload(Int(response.downloadSize))
+            }
+            if response.hasCurrentSignpost {
+              let currentSignpost = ImageGeneratorSignpost(
+                from: response.currentSignpost)
+              let signpostsSet = Set(
+                response.signposts.map { signpostProto in
+                  ImageGeneratorSignpost(from: signpostProto)
+                })
+              var previewTensor: Tensor<FloatType>? = nil
+              if response.hasPreviewImage {
+                switch response.previewPayloadType {
+                case .responsePayloadTypeTensor:
+                  if let tensor = Tensor<FloatType>(
+                    data: response.previewImage, using: [.zip, .fpzip])
+                  {
+                    previewTensor = Tensor<FloatType>(from: tensor)
+                  }
+                case .responsePayloadTypePng, .responsePayloadTypeJpeg:
+                  previewTensor = tensorFromEncodedImageData(response.previewImage)
+                case .responsePayloadTypeUnspecified, .UNRECOGNIZED:
+                  if let tensor = Tensor<FloatType>(
+                    data: response.previewImage, using: [.zip, .fpzip])
+                  {
+                    previewTensor = Tensor<FloatType>(from: tensor)
+                  } else {
+                    previewTensor = tensorFromEncodedImageData(response.previewImage)
+                  }
+                }
+              }
+              let isGenerating = feedback(currentSignpost, signpostsSet, previewTensor)
+              if !isGenerating {
+                logger.info("Stream cancel image generating")
+                cancellationQueue.sync {
+                  shouldCancel = true
+                }
+                throw CancellationError()
+              }
+            }
+            if response.hasScaleFactor {
+              scaleFactor = Int(response.scaleFactor)
+            }
+          }
+          return ()
+        }
+      } catch let rpcError as RPCError {
+        logger.error("Stream failed with RPC error: \(rpcError)")
+        if rpcError.code == .permissionDenied, rpcError.message.contains("throttlePolicy"),
+          let requestExceedLimitHandler = requestExceedLimitHandler
+        {
+          requestExceedLimitHandler()
+        }
+        resultQueue.sync {
+          completionError = .failedWithStatus(rpcError)
+        }
+      } catch {
+        logger.error("Stream failed with error: \(error)")
+        resultQueue.sync {
+          completionError = .failedWithError(error)
+        }
+      }
+    }
+
+    completionSemaphore.wait()
+    if tensors.isEmpty, let completionError = resultQueue.sync(execute: { completionError }) {
+      throw completionError
     }
     return (tensors, audios.isEmpty ? nil : audios, scaleFactor)
   }
