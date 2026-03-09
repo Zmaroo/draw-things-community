@@ -103,4 +103,21 @@ final class GRPCProtocolCompatibilityTests: XCTestCase {
     XCTAssertTrue(descriptor.contains("default_response=tensor"))
     XCTAssertTrue(descriptor.contains("model_browsing=true"))
   }
+
+  func testTraceTagsIncludeRequiredFields() {
+    let tags = ImageGenerationServiceImpl.grpcTraceTags(
+      requestID: "req-123",
+      eventType: "final_image",
+      payloadType: .png,
+      chunkIndex: 1,
+      chunkTotal: 4,
+      isTerminal: false
+    )
+    XCTAssertTrue(tags.contains("request_id=req-123"))
+    XCTAssertTrue(tags.contains("event_type=final_image"))
+    XCTAssertTrue(tags.contains("payload_type=png"))
+    XCTAssertTrue(tags.contains("chunk_index=1"))
+    XCTAssertTrue(tags.contains("chunk_total=4"))
+    XCTAssertTrue(tags.contains("is_terminal=false"))
+  }
 }

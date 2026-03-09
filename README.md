@@ -56,6 +56,11 @@ Client integration notes:
 - `generatedImages` may be chunked; reassemble using `chunkState`.
 - Prefer `previewPayloadType` / `finalPayloadType` when decoding payload bytes.
 - Keep a PNG/JPEG fallback decode path for mixed-version deployments.
+- Stream updates include structured `tags` entries, including `request_id` and `event_type`.
+- Expect exactly one terminal stream event per generation request with:
+  - `event_type=terminal`
+  - `is_terminal=true`
+  - `terminal_status=completed|cancelled|failed`
 - Recommended profile for external UI clients:
   - Preview: `RESPONSE_FORMAT_JPEG`
   - Final: `RESPONSE_FORMAT_PNG`
@@ -68,6 +73,12 @@ To regenerate gRPC Swift model sources from proto definitions, run:
 
 ```bash
 ./Scripts/GRPC/generate_models.sh
+```
+
+To verify generated gRPC model sources are committed and up to date:
+
+```bash
+./Scripts/GRPC/verify_models_up_to_date.sh
 ```
 
 # Self-host gRPCServerCLI from Packaged Binaries

@@ -213,6 +213,33 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     return values.map { "\($0.0)=\($0.1)" }.joined(separator: ";")
   }
 
+  static func grpcTraceTags(
+    requestID: String,
+    eventType: String,
+    payloadType: EncodedImagePayloadType? = nil,
+    chunkIndex: Int? = nil,
+    chunkTotal: Int? = nil,
+    isTerminal: Bool? = nil
+  ) -> [String] {
+    var tags = [
+      "request_id=\(requestID)",
+      "event_type=\(eventType)",
+    ]
+    if let payloadType = payloadType {
+      tags.append("payload_type=\(payloadType.rawValue)")
+    }
+    if let chunkIndex = chunkIndex {
+      tags.append("chunk_index=\(chunkIndex)")
+    }
+    if let chunkTotal = chunkTotal {
+      tags.append("chunk_total=\(chunkTotal)")
+    }
+    if let isTerminal = isTerminal {
+      tags.append("is_terminal=\(isTerminal)")
+    }
+    return tags
+  }
+
   private func validateGenerationRequest(
     configuration: GenerationConfiguration, modelOverrides: [ModelZoo.Specification]
   ) throws {
@@ -264,8 +291,9 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     request: ImageGenerationRequest,
     context: StreamingResponseCallContext<ImageGenerationResponse>
   ) -> EventLoopFuture<GRPCStatus> {
+    let requestID = UUID().uuidString
     // Log the incoming request
-    logger.info("Received image processing request, begin.")
+    logger.info("Received image processing request, begin. request_id=\(requestID)")
     let eventLoop = context.eventLoop
     if let sharedSecret = sharedSecret, !sharedSecret.isEmpty {
       guard request.sharedSecret == sharedSecret else {
@@ -280,15 +308,31 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     if let serverConfigurationRewriter = serverConfigurationRewriter {
       let cancelFlag = ManagedAtomic<Bool>(false)
       let successFlag = ManagedAtomic<Bool>(false)
+      let terminalEmitted = ManagedAtomic<Bool>(false)
       var cancellation: ProtectedValue<(() -> Void)?> = ProtectedValue(nil)
       let logger = logger
       let cancellationMonitor = cancellationMonitor
+      func emitTerminalEvent(_ status: String) {
+        let once = terminalEmitted.compareExchange(
+          expected: false, desired: true, ordering: .acquiringAndReleasing)
+        guard once.exchanged else { return }
+        let response = ImageGenerationResponse.with {
+          $0.tags =
+            Self.grpcTraceTags(
+              requestID: requestID,
+              eventType: "terminal",
+              isTerminal: true
+            ) + ["terminal_status=\(status)"]
+        }
+        context.sendResponse(response, promise: nil)
+      }
       func cancel() {
         cancelFlag.store(true, ordering: .releasing)
         cancellation.modify {
           $0?()
           $0 = nil
         }
+        emitTerminalEvent("cancelled")
         if let cancellationMonitor = cancellationMonitor {
           Self.cancellationMonitoring(
             successFlag: successFlag, logger: logger, cancellationMonitor: cancellationMonitor)
@@ -306,6 +350,11 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
             $0.item = Int32(index)
             $0.itemsExpected = Int32(total)
           }
+          $0.tags = Self.grpcTraceTags(
+            requestID: requestID,
+            eventType: "remote_download",
+            isTerminal: false
+          )
         }
         context.sendResponse(response, promise: nil)
       } cancellation: {
@@ -327,10 +376,12 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
               configuration: newConfiguration, request: request, promise: promise, context: context,
               responseCompression: responseCompression, cancelFlag: cancelFlag,
               successFlag: successFlag,
-              cancellation: &cancellation, cancel: cancel
+              cancellation: &cancellation, cancel: cancel, requestID: requestID,
+              emitTerminalEvent: emitTerminalEvent
             )
           }
         case .failure(let error):
+          emitTerminalEvent("failed")
           promise.fail(error)
           context.statusPromise.fail(error)
           if let delegate = self.delegate {
@@ -344,9 +395,25 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     } else {
       queue.async { [weak self] in
         guard let self = self else { return }
+        let terminalEmitted = ManagedAtomic<Bool>(false)
+        func emitTerminalEvent(_ status: String) {
+          let once = terminalEmitted.compareExchange(
+            expected: false, desired: true, ordering: .acquiringAndReleasing)
+          guard once.exchanged else { return }
+          let response = ImageGenerationResponse.with {
+            $0.tags =
+              Self.grpcTraceTags(
+                requestID: requestID,
+                eventType: "terminal",
+                isTerminal: true
+              ) + ["terminal_status=\(status)"]
+          }
+          context.sendResponse(response, promise: nil)
+        }
         self.generateImage(
           configuration: configuration, request: request, promise: promise, context: context,
-          responseCompression: responseCompression
+          responseCompression: responseCompression, requestID: requestID,
+          emitTerminalEvent: emitTerminalEvent
         )
       }
     }
@@ -358,7 +425,9 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     request: ImageGenerationRequest,
     promise: EventLoopPromise<GRPCStatus>,
     context: StreamingResponseCallContext<ImageGenerationResponse>,
-    responseCompression: Bool
+    responseCompression: Bool,
+    requestID: String,
+    emitTerminalEvent: @escaping (String) -> Void
   ) {
     let cancelFlag = ManagedAtomic<Bool>(false)
     let successFlag = ManagedAtomic<Bool>(false)
@@ -384,7 +453,8 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       configuration: configuration, request: request, promise: promise, context: context,
       responseCompression: responseCompression, cancelFlag: cancelFlag, successFlag: successFlag,
       cancellation: &cancellation,
-      cancel: cancel)
+      cancel: cancel, requestID: requestID,
+      emitTerminalEvent: emitTerminalEvent)
   }
 
   private func generateImage(
@@ -396,13 +466,15 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     cancelFlag: ManagedAtomic<Bool>,
     successFlag: ManagedAtomic<Bool>,
     cancellation: inout ProtectedValue<(() -> Void)?>,
-    cancel: @escaping () -> Void
+    cancel: @escaping () -> Void,
+    requestID: String,
+    emitTerminalEvent: @escaping (String) -> Void
   ) {
     func isCancelled() -> Bool {
       return cancelFlag.load(ordering: .acquiring)
     }
     logger.info(
-      "Received image processing request with configuration steps: \(configuration.steps)"
+      "Received image processing request with configuration steps: \(configuration.steps), request_id=\(requestID)"
     )
     let override = request.override
     let jsonDecoder = JSONDecoder()
@@ -414,6 +486,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     do {
       try validateGenerationRequest(configuration: configuration, modelOverrides: models)
     } catch {
+      emitTerminalEvent("failed")
       promise.fail(error)
       context.statusPromise.fail(error)
       return
@@ -464,7 +537,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
 
         guard !isCancelled() else {
           self.logger.info(
-            "cacncelled image generation"
+            "cancelled image generation request_id=\(requestID)"
           )
           return false
         }
@@ -484,6 +557,18 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
           {
             $0.previewImage = encodedPreview.payload
             $0.previewPayloadType = self.responsePayloadType(from: encodedPreview.payloadType)
+            $0.tags = Self.grpcTraceTags(
+              requestID: requestID,
+              eventType: "progress_preview",
+              payloadType: encodedPreview.payloadType,
+              isTerminal: false
+            )
+          } else {
+            $0.tags = Self.grpcTraceTags(
+              requestID: requestID,
+              eventType: "progress",
+              isTerminal: false
+            )
           }
         }
 
@@ -591,6 +676,11 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       if totalBytes > 0 {
         let projectionResponse = ImageGenerationResponse.with {
           $0.downloadSize = Int64(totalBytes)
+          $0.tags = Self.grpcTraceTags(
+            requestID: requestID,
+            eventType: "download_projection",
+            isTerminal: false
+          )
         }
         context.sendResponse(projectionResponse, promise: nil)
       }
@@ -613,6 +703,11 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
           }
           $0.scaleFactor = Int32(scaleFactor)
           $0.chunkState = .lastChunk
+          $0.tags = Self.grpcTraceTags(
+            requestID: requestID,
+            eventType: "final_empty",
+            isTerminal: false
+          )
         }
         context.sendResponse(finalResponse, promise: nil)
       } else {
@@ -628,6 +723,14 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
                 $0.scaleFactor = Int32(scaleFactor)
                 $0.chunkState = index == chunks.count - 1 ? .lastChunk : .moreChunks
                 $0.finalPayloadType = finalPayloadType
+                $0.tags = Self.grpcTraceTags(
+                  requestID: requestID,
+                  eventType: "final_image",
+                  payloadType: encodedImages.payloadType,
+                  chunkIndex: index,
+                  chunkTotal: chunks.count,
+                  isTerminal: false
+                )
               }
               context.sendResponse(finalResponse, promise: nil)
             }
@@ -639,6 +742,14 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
               $0.scaleFactor = Int32(scaleFactor)
               $0.chunkState = .lastChunk
               $0.finalPayloadType = finalPayloadType
+              $0.tags = Self.grpcTraceTags(
+                requestID: requestID,
+                eventType: "final_image",
+                payloadType: encodedImages.payloadType,
+                chunkIndex: 0,
+                chunkTotal: 1,
+                isTerminal: false
+              )
             }
             context.sendResponse(finalResponse, promise: nil)
           }
@@ -654,6 +765,13 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
               let finalResponse = ImageGenerationResponse.with {
                 $0.generatedAudio = [audio]
                 $0.chunkState = .lastChunk
+                $0.tags = Self.grpcTraceTags(
+                  requestID: requestID,
+                  eventType: "final_audio",
+                  chunkIndex: 0,
+                  chunkTotal: 1,
+                  isTerminal: false
+                )
               }
               context.sendResponse(finalResponse, promise: nil)
             } else {
@@ -667,6 +785,13 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
                   } else {
                     $0.chunkState = .moreChunks
                   }
+                  $0.tags = Self.grpcTraceTags(
+                    requestID: requestID,
+                    eventType: "final_audio",
+                    chunkIndex: j / (4 * 1024 * 1024),
+                    chunkTotal: (dataSize + 4 * 1024 * 1024 - 1) / (4 * 1024 * 1024),
+                    isTerminal: false
+                  )
                 }
                 context.sendResponse(finalResponse, promise: nil)
               }
@@ -677,6 +802,13 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
             let finalResponse = ImageGenerationResponse.with {
               $0.generatedAudio = [audio]
               $0.chunkState = .lastChunk
+              $0.tags = Self.grpcTraceTags(
+                requestID: requestID,
+                eventType: "final_audio",
+                chunkIndex: 0,
+                chunkTotal: 1,
+                isTerminal: false
+              )
             }
             context.sendResponse(finalResponse, promise: nil)
           }
@@ -685,12 +817,14 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       promise.succeed(.ok)
       context.statusPromise.succeed(.ok)
       let success = imageDatas.isEmpty ? false : true
+      emitTerminalEvent(success ? "completed" : (isCancelled() ? "cancelled" : "failed"))
       if let delegate = delegate {
         DispatchQueue.main.async {
           delegate.didCompleteGenerationResponse(success: success)
         }
       }
     } catch (let error) {
+      emitTerminalEvent(isCancelled() ? "cancelled" : "failed")
       promise.fail(error)
       context.statusPromise.fail(error)
       if let delegate = delegate {

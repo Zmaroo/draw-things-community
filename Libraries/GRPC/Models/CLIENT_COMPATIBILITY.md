@@ -36,6 +36,15 @@ Fallback order used by server:
 - `generatedImages` may be chunked; use `chunkState` to reassemble.
 - Use `previewPayloadType` / `finalPayloadType` to decode bytes when present.
 - Keep PNG/JPEG fallback decoding for mixed-version clients.
+- Every stream update now includes structured `tags` entries:
+  - `request_id=...`
+  - `event_type=...`
+  - optional `payload_type=...`, `chunk_index=...`, `chunk_total=...`
+  - `is_terminal=true|false`
+- Server emits a terminal stream event exactly once per request with:
+  - `event_type=terminal`
+  - `is_terminal=true`
+  - `terminal_status=completed|cancelled|failed`
 
 ## Recommended format profile
 
@@ -66,6 +75,12 @@ Use the repo helper:
 
 ```bash
 ./Scripts/GRPC/generate_models.sh
+```
+
+Optional verification helper:
+
+```bash
+./Scripts/GRPC/verify_models_up_to_date.sh
 ```
 
 This regenerates:
