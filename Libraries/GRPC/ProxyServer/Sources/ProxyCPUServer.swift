@@ -2,16 +2,12 @@ import BinaryResources
 import Crypto
 import DataModels
 import Foundation
-import GRPC
 import GRPCControlPanelModels
+import GRPCCore
 import GRPCImageServiceModels
-import GRPCLegacyCompat
+import GRPCNIOTransportHTTP2
 import Logging
 import ModelZoo
-import NIO
-import NIOHPACK
-import NIOHTTP2
-import NIOSSL
 
 #if canImport(FoundationNetworking)
   import FoundationNetworking
@@ -27,9 +23,10 @@ public enum ProxyTaskPriority: Sendable {
 struct WorkTask {
   var priority: ProxyTaskPriority
   var request: ImageGenerationRequest
-  var context: StreamingResponseCallContext<ImageGenerationResponse>
-  var promise: EventLoopPromise<GRPCStatus>
-  var heartbeat: Task<Void, Error>
+  var metadata: Metadata
+  var responseWriter: RPCWriter<ImageGenerationResponse>
+  var completion: @Sendable (Result<Metadata, Error>) -> Void
+  var heartbeat: Task<Void, Never>
   var creationTimestamp: Date
   var model: String
   var payload: JWTPayload
@@ -73,9 +70,7 @@ extension Worker {
         logger.info(
           "user: \(task.payload.userId as Any), \(errorMessage) (Priority: \(task.priority))")
         // intentionally abort task from throttle queue over 1 hour
-        let status = GRPCStatus(code: .aborted, message: errorMessage)
-        task.promise.succeed(status)
-        task.context.statusPromise.succeed(status)
+        task.completion(.failure(RPCError(code: .aborted, message: errorMessage)))
         return
       }
     }
@@ -89,30 +84,25 @@ extension Worker {
       let taskExecuteStartTimestamp = Date()
       let workerId = id
       let callTask = Task {
-        try await client.generateImage(task.request) { response in
+        try await client.generateImage(task.request, metadata: task.metadata) { response in
           var numberOfImages = 0
           for try await streamResponse in response.messages {
             if !streamResponse.generatedImages.isEmpty {
               numberOfImages += streamResponse.generatedImages.count
             }
             do {
-              try await task.context.sendResponse(streamResponse).get()
+              try await task.responseWriter.write(streamResponse)
               logger.debug("forward response: \(streamResponse)")
             } catch {
               logger.error("Worker: \(workerId), forward response error \(error)")
-              task.promise.fail(error)
+              task.completion(.failure(error))
               throw error
             }
           }
           return numberOfImages
         }
       }
-      task.context.closeFuture.whenComplete { _ in
-        callTask.cancel()
-      }
-
       let numberOfImages = try await callTask.value
-      let status = GRPCStatus(code: .ok, message: nil)
       if numberOfImages > 0 {
         let totalTimeMs = Date().timeIntervalSince(task.creationTimestamp) * 1000
         let totalExecutionTimeMs = Date().timeIntervalSince(taskExecuteStartTimestamp) * 1000
@@ -123,7 +113,7 @@ extension Worker {
           "Succeed: {\"model\": \"\(task.model)\", \"userid\": \"\(task.payload.userId as Any)\",  \"generationId\": \"\(task.payload.generationId as Any)\", \"images\":\(numberOfImages)}"
         )
       }
-      let isTaskSuccessful = (status.code == .ok) && (numberOfImages > 0)
+      let isTaskSuccessful = numberOfImages > 0
 
       if task.payload.consumableType == .boost, let amount = task.payload.amount,
         let generationId = task.payload.generationId
@@ -133,8 +123,7 @@ extension Worker {
           amount: amount,
           logger: logger)
       }
-      task.promise.succeed(status)
-      task.context.statusPromise.succeed(status)
+      task.completion(.success([:]))
 
       logger.info(
         "Worker \(id) completed, generationId: \(task.payload.generationId as Any), successfully (Priority: \(task.priority))"
@@ -149,8 +138,7 @@ extension Worker {
           logger: logger)
       }
       logger.error("Worker \(id) task failed with error: \(error) (Priority: \(task.priority))")
-      task.promise.fail(error)
-      task.context.statusPromise.fail(error)
+      task.completion(.failure(error))
       throw error
     }
   }
@@ -451,11 +439,13 @@ public actor ControlConfigs {
   }
 }
 
-final class ControlPanelService: ControlPanelServiceProvider {
-  var interceptors: (any ControlPanelServiceServerInterceptorFactoryProtocol)?
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+final class ControlPanelProxyService: GRPCControlPanelModels.ControlPanelService
+    .SimpleServiceProtocol
+{
   private let taskQueue: TaskQueue
-  private var controlConfigs: ControlConfigs
-  private var proxyMessageSigner: ProxyMessageSigner
+  private let controlConfigs: ControlConfigs
+  private let proxyMessageSigner: ProxyMessageSigner
   private let logger: Logger
   enum ControlPanelError: Error {
     case gpuConnectFailed(message: String)
@@ -474,224 +464,208 @@ final class ControlPanelService: ControlPanelServiceProvider {
   }
 
   func manageGPUServer(
-    request: GRPCControlPanelModels.GPUServerRequest, context: any GRPC.StatusOnlyCallContext
-  ) -> NIOCore.EventLoopFuture<GRPCControlPanelModels.GPUServerResponse> {
-    let promise = context.eventLoop.makePromise(of: GRPCControlPanelModels.GPUServerResponse.self)
-    Task {
-      let gpuServerName = "\(request.serverConfig.address):\(request.serverConfig.port)"
-      switch request.operation {
-      case .add:
-        self.logger.info(
-          "Worker connecting server: \(gpuServerName). Worker focus on \(request.serverConfig.isHighPriority ? ProxyTaskPriority.high : ProxyTaskPriority.low) priority Task"
-        )
-        let client = ProxyGPUClientWrapper(deviceName: gpuServerName)
-        do {
-          try client.connect(
-            host: request.serverConfig.address, port: Int(request.serverConfig.port))
-          let result = await client.echo()
-          self.logger.info("server: \(gpuServerName). echo \(result)")
-          if let _ = client.client, result.0 {
-            let worker = Worker(
-              id: gpuServerName, client: client,
-              primaryPriority: request.serverConfig.isHighPriority ? .high : .low)
-            await taskQueue.addWorker(worker)
-            let workersId = await taskQueue.workerIds
-            let response = GPUServerResponse.with {
-              $0.message =
-                "added GPU \(gpuServerName) into workers stream, current workers:\(workersId)"
-            }
-            promise.succeed(response)
-          } else {
-            try? client.disconnect()
-            promise.fail(
-              ControlPanelError.nioClientFailed(
-                message: "fail to create nio client for \(gpuServerName)"))
+    request: GRPCControlPanelModels.GPUServerRequest, context: ServerContext
+  ) async throws -> GRPCControlPanelModels.GPUServerResponse {
+    let gpuServerName = "\(request.serverConfig.address):\(request.serverConfig.port)"
+    switch request.operation {
+    case .add:
+      self.logger.info(
+        "Worker connecting server: \(gpuServerName). Worker focus on \(request.serverConfig.isHighPriority ? ProxyTaskPriority.high : ProxyTaskPriority.low) priority Task"
+      )
+      let client = ProxyGPUClientWrapper(deviceName: gpuServerName)
+      do {
+        try client.connect(
+          host: request.serverConfig.address, port: Int(request.serverConfig.port))
+        let result = await client.echo()
+        self.logger.info("server: \(gpuServerName). echo \(result)")
+        if let _ = client.client, result.0 {
+          let worker = Worker(
+            id: gpuServerName, client: client,
+            primaryPriority: request.serverConfig.isHighPriority ? .high : .low)
+          await taskQueue.addWorker(worker)
+          let workersId = await taskQueue.workerIds
+          let response = GPUServerResponse.with {
+            $0.message =
+              "added GPU \(gpuServerName) into workers stream, current workers:\(workersId)"
           }
-        } catch (let error) {
-          promise.fail(
-            ControlPanelError.gpuConnectFailed(
-              message: "fail to connect GPU \(gpuServerName) error:\(error)"))
+          return response
+        } else {
+          try? client.disconnect()
+          throw ControlPanelError.nioClientFailed(
+            message: "fail to create nio client for \(gpuServerName)")
         }
-      case .remove:
-        await taskQueue.removeWorkerById(gpuServerName)
-        let workersId = await taskQueue.workerIds
-        let response = GPUServerResponse.with {
-          $0.message =
-            "remove GPU \(gpuServerName) from taskCoordinator, current workers:\(workersId)"
-        }
-        promise.succeed(response)
-      case .unspecified, .UNRECOGNIZED(_):
-        break
+      } catch (let error) {
+        throw ControlPanelError.gpuConnectFailed(
+          message: "fail to connect GPU \(gpuServerName) error:\(error)")
       }
-
+    case .remove:
+      await taskQueue.removeWorkerById(gpuServerName)
+      let workersId = await taskQueue.workerIds
+      let response = GPUServerResponse.with {
+        $0.message =
+          "remove GPU \(gpuServerName) from taskCoordinator, current workers:\(workersId)"
+      }
+      return response
+    case .unspecified, .UNRECOGNIZED(_):
+      return GPUServerResponse.with {
+        $0.message = "No operation specified"
+      }
     }
-
-    return promise.futureResult
   }
 
   func updateModelList(
-    request: GRPCControlPanelModels.UpdateModelListRequest, context: any GRPC.StatusOnlyCallContext
-  ) -> NIOCore.EventLoopFuture<GRPCControlPanelModels.UpdateModelListResponse> {
-    let promise = context.eventLoop.makePromise(
-      of: GRPCControlPanelModels.UpdateModelListResponse.self)
-    Task {
-      let fileList = request.files.joined(separator: "\n")
-      // TODO: The path is problematic.
-      let internalFilePath = await controlConfigs.modelListPath
-      try? fileList.write(
-        to: URL(fileURLWithPath: internalFilePath),
-        atomically: true,
-        encoding: .utf8)
-      self.logger.info(
-        "update model list to file: \(internalFilePath) with \(request.files.count) models")
+    request: GRPCControlPanelModels.UpdateModelListRequest, context: ServerContext
+  ) async throws -> GRPCControlPanelModels.UpdateModelListResponse {
+    let fileList = request.files.joined(separator: "\n")
+    // TODO: The path is problematic.
+    let internalFilePath = await controlConfigs.modelListPath
+    try? fileList.write(
+      to: URL(fileURLWithPath: internalFilePath),
+      atomically: true,
+      encoding: .utf8)
+    self.logger.info(
+      "update model list to file: \(internalFilePath) with \(request.files.count) models")
 
-      let response = UpdateModelListResponse.with {
-        $0.message = "update model-list file with \(request.files.count) models"
-      }
-      promise.succeed(response)
-
+    let response = UpdateModelListResponse.with {
+      $0.message = "update model-list file with \(request.files.count) models"
     }
-
-    return promise.futureResult
+    return response
   }
 
   func updateThrottlingConfig(
-    request: GRPCControlPanelModels.ThrottlingRequest, context: any GRPC.StatusOnlyCallContext
-  ) -> NIOCore.EventLoopFuture<GRPCControlPanelModels.ThrottlingResponse> {
-    let promise = context.eventLoop.makePromise(of: GRPCControlPanelModels.ThrottlingResponse.self)
-    Task {
-      await controlConfigs.updateThrottlePolicy(
-        newPolicies: request.limitConfig.mapValues { Int($0) })
-      let currentThrottlePolicies = await controlConfigs.throttlePolicy
-      self.logger.info(
+    request: GRPCControlPanelModels.ThrottlingRequest, context: ServerContext
+  ) async throws -> GRPCControlPanelModels.ThrottlingResponse {
+    await controlConfigs.updateThrottlePolicy(
+      newPolicies: request.limitConfig.mapValues { Int($0) })
+    let currentThrottlePolicies = await controlConfigs.throttlePolicy
+    self.logger.info(
+      "Update throttling for \(request.limitConfig), current throttling policies are \(currentThrottlePolicies)"
+    )
+    let response = ThrottlingResponse.with {
+      $0.message =
         "Update throttling for \(request.limitConfig), current throttling policies are \(currentThrottlePolicies)"
-      )
-      let response = ThrottlingResponse.with {
-        $0.message =
-          "Update throttling for \(request.limitConfig), current throttling policies are \(currentThrottlePolicies)"
-      }
-      promise.succeed(response)
     }
-
-    return promise.futureResult
+    return response
   }
 
   func updatePem(
-    request: GRPCControlPanelModels.UpdatePemRequest, context: any GRPC.StatusOnlyCallContext
-  ) -> NIOCore.EventLoopFuture<GRPCControlPanelModels.UpdatePemResponse> {
-    let promise = context.eventLoop.makePromise(of: GRPCControlPanelModels.UpdatePemResponse.self)
-    Task {
-      try await controlConfigs.updatePublicKeyPEM()
-      let pem = await controlConfigs.publicKeyPEM
-      let response = UpdatePemResponse.with {
-        $0.message = "Update proxy pem as:\n \(pem)"
-      }
-      promise.succeed(response)
+    request: GRPCControlPanelModels.UpdatePemRequest, context: ServerContext
+  ) async throws -> GRPCControlPanelModels.UpdatePemResponse {
+    try await controlConfigs.updatePublicKeyPEM()
+    let pem = await controlConfigs.publicKeyPEM
+    let response = UpdatePemResponse.with {
+      $0.message = "Update proxy pem as:\n \(pem)"
     }
-    return promise.futureResult
+    return response
   }
 
-  func updateSharedSecret(request: UpdateSharedSecretRequest, context: StatusOnlyCallContext)
-    -> EventLoopFuture<UpdateSharedSecretResponse>
+  func updateSharedSecret(request: UpdateSharedSecretRequest, context: ServerContext)
+    async throws -> UpdateSharedSecretResponse
   {
-    let promise = context.eventLoop.makePromise(
-      of: GRPCControlPanelModels.UpdateSharedSecretResponse.self)
-    Task {
-      let sharedSecret = await controlConfigs.updateSharedSecret()
-      let response = UpdateSharedSecretResponse.with {
-        $0.message = "Update proxy shared secret as:\n \(sharedSecret)"
-      }
-      promise.succeed(response)
+    let sharedSecret = await controlConfigs.updateSharedSecret()
+    let response = UpdateSharedSecretResponse.with {
+      $0.message = "Update proxy shared secret as:\n \(sharedSecret)"
     }
-
-    return promise.futureResult
+    return response
   }
 
-  func updatePrivateKey(request: UpdatePrivateKeyRequest, context: StatusOnlyCallContext)
-    -> EventLoopFuture<UpdatePrivateKeyResponse>
+  func updatePrivateKey(request: UpdatePrivateKeyRequest, context: ServerContext)
+    async throws -> UpdatePrivateKeyResponse
   {
-    let promise = context.eventLoop.makePromise(
-      of: GRPCControlPanelModels.UpdatePrivateKeyResponse.self)
-    Task {
-      await proxyMessageSigner.reloadKeys()
-      self.logger.info(
-        "regenerate proxy private key pairs"
-      )
+    await proxyMessageSigner.reloadKeys()
+    self.logger.info(
+      "regenerate proxy private key pairs"
+    )
 
-      let publicKeyPEM = await proxyMessageSigner.getPublicKey()
-      let response = UpdatePrivateKeyResponse.with {
-        $0.message = "Update proxy private keys, current public key is: \(publicKeyPEM as Any)"
-      }
-      promise.succeed(response)
+    let publicKeyPEM = await proxyMessageSigner.getPublicKey()
+    let response = UpdatePrivateKeyResponse.with {
+      $0.message = "Update proxy private keys, current public key is: \(publicKeyPEM as Any)"
     }
-
-    return promise.futureResult
+    return response
   }
 
   func updateComputeUnit(
     request: GRPCControlPanelModels.UpdateComputeUnitRequest,
-    context: any GRPC.StatusOnlyCallContext
-  ) -> NIOCore.EventLoopFuture<GRPCControlPanelModels.UpdateComputeUnitResponse> {
-    let promise = context.eventLoop.makePromise(
-      of: GRPCControlPanelModels.UpdateComputeUnitResponse.self)
-    Task {
-      // Get current state
-      let (currentComputeUnitPolicies, currentExpirationTimestamp) =
+    context: ServerContext
+  ) async throws -> GRPCControlPanelModels.UpdateComputeUnitResponse {
+    // Get current state
+    let (currentComputeUnitPolicies, currentExpirationTimestamp) =
+      await controlConfigs.getComputeUnitPolicyAndExpirationTimestamp()
+    let currentExpirationStr =
+      currentExpirationTimestamp.map { "expiration: \($0)" } ?? "no expiration"
+
+    // Validate expiration timestamp first
+    let currentTime = Int64(Date().timeIntervalSince1970)
+
+    let logMessage: String
+    let response: UpdateComputeUnitResponse
+    let newExpirationTimestamp = request.expirationTimestamp
+    if newExpirationTimestamp > currentTime {
+      self.logger.info(
+        "Current compute unit policies: \(currentComputeUnitPolicies), \(currentExpirationStr)")
+
+      // Update with new policies and timestamp
+      await controlConfigs.updateComputeUnitPolicyAndExpirationTimestamp(
+        newPolicies: request.cuConfig.mapValues { Int($0) },
+        Date(timeIntervalSince1970: TimeInterval(newExpirationTimestamp)))
+
+      let (updatedComputeUnitPolicies, updatedExpirationTimestamp) =
         await controlConfigs.getComputeUnitPolicyAndExpirationTimestamp()
-      let currentExpirationStr =
-        currentExpirationTimestamp.map { "expiration: \($0)" } ?? "no expiration"
 
-      // Validate expiration timestamp first
-      let currentTime = Int64(Date().timeIntervalSince1970)
+      logMessage =
+        "Updated compute unit policies to \(updatedComputeUnitPolicies), timestamp: \(updatedExpirationTimestamp as Any)"
 
-      let logMessage: String
-      let response: UpdateComputeUnitResponse
-      let newExpirationTimestamp = request.expirationTimestamp
-      if newExpirationTimestamp > currentTime {
-        self.logger.info(
-          "Current compute unit policies: \(currentComputeUnitPolicies), \(currentExpirationStr)")
-
-        // Update with new policies and timestamp
-        await controlConfigs.updateComputeUnitPolicyAndExpirationTimestamp(
-          newPolicies: request.cuConfig.mapValues { Int($0) },
-          Date(timeIntervalSince1970: TimeInterval(newExpirationTimestamp)))
-
-        let (updatedComputeUnitPolicies, updatedExpirationTimestamp) =
-          await controlConfigs.getComputeUnitPolicyAndExpirationTimestamp()
-
-        logMessage =
-          "Updated compute unit policies to \(updatedComputeUnitPolicies), timestamp: \(updatedExpirationTimestamp as Any)"
-
-        response = UpdateComputeUnitResponse.with {
-          $0.message = logMessage
-        }
-      } else {
-        // Invalid timestamp - skip update and report current state
-        logMessage =
-          "Invalid expiration timestamp \(request.expirationTimestamp) (must be in the future). Current compute unit policies: \(currentComputeUnitPolicies), \(currentExpirationStr)"
-
-        response = UpdateComputeUnitResponse.with {
-          $0.message = logMessage
-        }
+      response = UpdateComputeUnitResponse.with {
+        $0.message = logMessage
       }
+    } else {
+      // Invalid timestamp - skip update and report current state
+      logMessage =
+        "Invalid expiration timestamp \(request.expirationTimestamp) (must be in the future). Current compute unit policies: \(currentComputeUnitPolicies), \(currentExpirationStr)"
 
-      self.logger.info("\(logMessage)")
-      promise.succeed(response)
+      response = UpdateComputeUnitResponse.with {
+        $0.message = logMessage
+      }
     }
 
-    return promise.futureResult
+    self.logger.info("\(logMessage)")
+    return response
   }
 }
 
-final class ImageGenerationProxyService: ImageGenerationServiceProvider {
-  var interceptors: (any ImageGenerationServiceServerInterceptorFactoryProtocol)?
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+private actor WorkerHealthState {
+  private var failureCounts: [String: Int] = [:]
+  private let maxFailureCount: Int
+
+  init(maxFailureCount: Int) {
+    self.maxFailureCount = maxFailureCount
+  }
+
+  func markSuccess(for workerID: String) {
+    failureCounts[workerID] = 0
+  }
+
+  func recordFailure(for workerID: String) -> (count: Int, shouldRemove: Bool) {
+    let count = failureCounts[workerID, default: 0] + 1
+    failureCounts[workerID] = count
+    return (count, count >= maxFailureCount)
+  }
+
+  func clearFailure(for workerID: String) {
+    failureCounts.removeValue(forKey: workerID)
+  }
+}
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+final class ImageGenerationProxyService: ImageGenerationService.ServiceProtocol {
 
   private let taskQueue: TaskQueue
   private let logger: Logger
-  private var controlConfigs: ControlConfigs
-  private var healthCheckTask: Task<Void, Never>?
-  private var proxyMessageSigner: ProxyMessageSigner
-  private var workerFailureCounts: [String: Int] = [:]
+  private let controlConfigs: ControlConfigs
+  private let healthCheckTask: Task<Void, Never>?
+  private let proxyMessageSigner: ProxyMessageSigner
+  private let workerHealthState: WorkerHealthState
   private let maxFailureCount: Int
 
   init(
@@ -703,31 +677,40 @@ final class ImageGenerationProxyService: ImageGenerationServiceProvider {
     self.controlConfigs = controlConfigs
     self.proxyMessageSigner = proxyMessageSigner
     self.maxFailureCount = maxFailureCount
-    if healthCheck {
-      self.startHealthCheck()
-    }
+    self.workerHealthState = WorkerHealthState(maxFailureCount: maxFailureCount)
+    self.healthCheckTask =
+      healthCheck
+      ? Self.makeHealthCheckTask(
+        taskQueue: taskQueue,
+        logger: logger,
+        workerHealthState: self.workerHealthState,
+        maxFailureCount: maxFailureCount
+      ) : nil
   }
 
-  private func startHealthCheck() {
-    healthCheckTask = Task { [weak self] in
+  private static func makeHealthCheckTask(
+    taskQueue: TaskQueue,
+    logger: Logger,
+    workerHealthState: WorkerHealthState,
+    maxFailureCount: Int
+  ) -> Task<Void, Never> {
+    Task {
       while !Task.isCancelled {
-        guard let self = self else { break }
         if let worker = await taskQueue.nextWorker() {
           let (success, _) = await worker.client.echo()
           if success {
             logger.info("Health check passed for worker: \(worker.id)")
-            workerFailureCounts[worker.id] = 0
+            await workerHealthState.markSuccess(for: worker.id)
             await taskQueue.returnWorker(worker)
           } else {
-            let currentCount = workerFailureCounts[worker.id, default: 0] + 1
-            workerFailureCounts[worker.id] = currentCount
+            let (currentCount, shouldRemove) = await workerHealthState.recordFailure(for: worker.id)
             logger.error(
               "Health check failed for worker: \(worker.id) (failure count: \(currentCount)/\(maxFailureCount))"
             )
 
-            if currentCount >= maxFailureCount {
+            if shouldRemove {
               logger.error("Worker \(worker.id) exceeded max failure count, removing from queue")
-              workerFailureCounts.removeValue(forKey: worker.id)
+              await workerHealthState.clearFailure(for: worker.id)
               await taskQueue.removeWorkerById(worker.id)
             } else {
               await taskQueue.returnWorker(worker)
@@ -886,106 +869,127 @@ final class ImageGenerationProxyService: ImageGenerationServiceProvider {
   }
 
   func generateImage(
-    request: ImageGenerationRequest,
-    context: StreamingResponseCallContext<ImageGenerationResponse>
-  ) -> EventLoopFuture<GRPCStatus> {
-    let headers = context.headers
-    guard let authorization = headers.first(name: "authorization"),
+    request: ServerRequest<ImageGenerationRequest>,
+    context: ServerContext
+  ) async throws -> StreamingServerResponse<ImageGenerationResponse> {
+    guard
+      let authorizationValue = request.metadata["authorization"].first(where: { _ in true }),
+      case let .string(authorization) = authorizationValue,
       let bearToken = parseBearer(from: authorization)
     else {
-      return context.eventLoop.makeFailedFuture(
-        GRPCStatus(code: .permissionDenied, message: "Service bear-token is empty")
-      )
+      throw RPCError(code: .permissionDenied, message: "Service bear-token is empty")
     }
     logger.info("generateImage request")
 
-    var validationRequest = request
+    var validationRequest = request.message
     validationRequest.contents = []
-    let encodedBlob = try? validationRequest.serializedData()
-    guard let encodedBlob = encodedBlob else {
-      return context.eventLoop.makeFailedFuture(
-        GRPCStatus(code: .permissionDenied, message: "Cannot encode validation request")
-      )
-    }
-    let promise = context.eventLoop.makePromise(of: GRPCStatus.self)
-    logger.info("Proxy Server enqueue image generating request")
-    let logger = logger
-    Task {
-      let pem: String = await controlConfigs.publicKeyPEM
-      let decoder = try? JWTDecoder(publicKeyPEM: pem)
-      let payload = try? decoder?.decode(bearToken)
-      guard let payload = payload else {
-        logger.info("decode payload failed, bearToken:\(bearToken)")
-        promise.fail(
-          GRPCStatus(
-            code: .permissionDenied, message: "Invalid payload"))
-        return
-      }
-      let (isValidRequest, message, model) = await isValidRequest(
-        payload: payload, encodedBlob: encodedBlob, request: request)
-      guard isValidRequest, let model = model else {
-        if payload.consumableType == .boost, let amount = payload.amount,
-          let generationId = payload.generationId
-        {
-          logger.info(
-            "isValidRequest cancel consumableType generationId:\( generationId), message:\(message)"
-          )
-          await proxyMessageSigner.completeBoost(
-            action: .cancel, generationId: generationId, amount: amount,
-            logger: logger)
-        } else {
-          logger.info(
-            "isValidRequest cancel generationId:\( payload.generationId as Any), without completeBoost, consumableType:\(payload.consumableType as Any), amount:\(payload.amount as Any), message:\(message)"
-          )
-        }
-        promise.fail(
-          GRPCStatus(
-            code: .permissionDenied, message: message))
-        return
-      }
-      let throttlePolicies = await controlConfigs.throttlePolicy
-      let priority = taskPriority(
-        from: payload.userClass, payload: payload,
-        throttlePolicies: throttlePolicies)
-      // Enqueue task.
-      let heartbeat = Task {
-        while !Task.isCancelled {
-          // Abort the task if we cannot send response any more. Send empty response as heartbeat to keep Cloudflare alive.
-          let _ = try await context.sendResponse(ImageGenerationResponse()).get()
-          try? await Task.sleep(for: .seconds(20))  // Every 20 seconds send a heartbeat.
-        }
-      }
-      let task = WorkTask(
-        priority: priority, request: request, context: context, promise: promise,
-        heartbeat: heartbeat, creationTimestamp: Date(), model: model, payload: payload)
-      await taskQueue.addTask(task)
-      if let worker = await taskQueue.nextWorker() {
-        // Note that the extracted task may not be the ones we just enqueued.
-        let highThreshold = throttlePolicies["high_free_worker_threshold"] ?? 8
-        let communityThreshold = throttlePolicies["community_free_worker_threshold"] ?? 0
-        let throttleQueueTimeoutSeconds = throttlePolicies["throttle_queue_timeout_seconds"] ?? 3600
-        let taskLoopBreakoutSeconds = throttlePolicies["task_loop_breakout_seconds"] ?? 30
-        if let nextTaskForWorker = await taskQueue.nextTaskForWorker(
-          worker, highThreshold: highThreshold, communityThreshold: communityThreshold,
-          taskLoopBreakoutSeconds: taskLoopBreakoutSeconds)
-        {
-          do {
-            try await worker.executeTask(
-              nextTaskForWorker, proxyMessageSigner: proxyMessageSigner,
-              throttleQueueTimeoutSeconds: throttleQueueTimeoutSeconds)
-            logger.info("Task execution completed successfully for worker \(worker.id)")
-          } catch {
-            logger.error("Task execution failed for worker \(worker.id): \(error)")
-          }
-        }
-        await taskQueue.returnWorker(worker)
-      } else {
-        logger.error("worker stream finished, can not get available worker")
-        heartbeat.cancel()
-      }
+    guard let encodedBlob = try? validationRequest.serializedData() else {
+      throw RPCError(code: .permissionDenied, message: "Cannot encode validation request")
     }
 
-    return promise.futureResult
+    let logger = self.logger
+    let requestMessage = request.message
+    let requestMetadata = request.metadata
+    return StreamingServerResponse(
+      of: ImageGenerationResponse.self,
+      metadata: [:]
+    ) { writer in
+      try await withCheckedThrowingContinuation {
+        (continuation: CheckedContinuation<Metadata, Error>) in
+        Task {
+          let pem: String = await self.controlConfigs.publicKeyPEM
+          let decoder = try? JWTDecoder(publicKeyPEM: pem)
+          let payload = try? decoder?.decode(bearToken)
+          guard let payload = payload else {
+            logger.info("decode payload failed, bearToken:\(bearToken)")
+            continuation.resume(
+              throwing: RPCError(code: .permissionDenied, message: "Invalid payload"))
+            return
+          }
+          let (isValidRequest, message, model) = await self.isValidRequest(
+            payload: payload, encodedBlob: encodedBlob, request: requestMessage)
+          guard isValidRequest, let model = model else {
+            if payload.consumableType == .boost, let amount = payload.amount,
+              let generationId = payload.generationId
+            {
+              logger.info(
+                "isValidRequest cancel consumableType generationId:\( generationId), message:\(message)"
+              )
+              await self.proxyMessageSigner.completeBoost(
+                action: .cancel, generationId: generationId, amount: amount,
+                logger: logger)
+            } else {
+              logger.info(
+                "isValidRequest cancel generationId:\( payload.generationId as Any), without completeBoost, consumableType:\(payload.consumableType as Any), amount:\(payload.amount as Any), message:\(message)"
+              )
+            }
+            continuation.resume(
+              throwing: RPCError(code: .permissionDenied, message: message))
+            return
+          }
+          let throttlePolicies = await self.controlConfigs.throttlePolicy
+          let priority = self.taskPriority(
+            from: payload.userClass, payload: payload,
+            throttlePolicies: throttlePolicies)
+          let completionQueue = DispatchQueue(
+            label: "ProxyCPUServer.taskCompletion.\(UUID().uuidString)")
+          var completed = false
+          let completeOnce: @Sendable (Result<Metadata, Error>) -> Void = { result in
+            completionQueue.sync {
+              guard !completed else { return }
+              completed = true
+            }
+            continuation.resume(with: result)
+          }
+          let heartbeat = Task {
+            while !Task.isCancelled && !context.cancellation.isCancelled {
+              do {
+                try await writer.write(ImageGenerationResponse())
+              } catch {
+                break
+              }
+              try? await Task.sleep(for: .seconds(20))
+            }
+          }
+          let task = WorkTask(
+            priority: priority,
+            request: requestMessage,
+            metadata: requestMetadata,
+            responseWriter: writer,
+            completion: completeOnce,
+            heartbeat: heartbeat,
+            creationTimestamp: Date(),
+            model: model,
+            payload: payload)
+          await self.taskQueue.addTask(task)
+          if let worker = await self.taskQueue.nextWorker() {
+            let highThreshold = throttlePolicies["high_free_worker_threshold"] ?? 8
+            let communityThreshold = throttlePolicies["community_free_worker_threshold"] ?? 0
+            let throttleQueueTimeoutSeconds =
+              throttlePolicies["throttle_queue_timeout_seconds"] ?? 3600
+            let taskLoopBreakoutSeconds = throttlePolicies["task_loop_breakout_seconds"] ?? 30
+            if let nextTaskForWorker = await self.taskQueue.nextTaskForWorker(
+              worker, highThreshold: highThreshold, communityThreshold: communityThreshold,
+              taskLoopBreakoutSeconds: taskLoopBreakoutSeconds)
+            {
+              do {
+                try await worker.executeTask(
+                  nextTaskForWorker, proxyMessageSigner: self.proxyMessageSigner,
+                  throttleQueueTimeoutSeconds: throttleQueueTimeoutSeconds)
+                logger.info("Task execution completed successfully for worker \(worker.id)")
+              } catch {
+                logger.error("Task execution failed for worker \(worker.id): \(error)")
+              }
+            }
+            await self.taskQueue.returnWorker(worker)
+          } else {
+            logger.error("worker stream finished, can not get available worker")
+            heartbeat.cancel()
+            completeOnce(.failure(RPCError(code: .unavailable, message: "No available worker")))
+          }
+        }
+      }
+    }
   }
 
   func taskPriority(
@@ -1032,121 +1036,105 @@ final class ImageGenerationProxyService: ImageGenerationServiceProvider {
     }
   }
 
-  func filesExist(request: FileListRequest, context: StatusOnlyCallContext) -> EventLoopFuture<
-    FileExistenceResponse
-  > {
-    let promise = context.eventLoop.makePromise(of: FileExistenceResponse.self)
-    Task {
-      let internalFilePath = await controlConfigs.modelListPath
-      let response = FileExistenceResponse.with {
-        $0.files = [String]()
-        $0.existences = [Bool]()
-        var fileList = [String]()
-        if let fileContent = try? String(
-          contentsOf: URL(fileURLWithPath: internalFilePath), encoding: .utf8)
-        {
-          fileList = fileContent.components(separatedBy: .newlines).filter { !$0.isEmpty }
-        } else {
-          logger.error("Proxy Server file list is nil")
-        }
-        for file in request.files {
-          $0.files.append(file)
-          let existence = fileList.contains(file)
-          $0.existences.append(existence)
-        }
-      }
-      promise.succeed(response)
-    }
-    return promise.futureResult
-  }
-
-  public func pubkey(request: PubkeyRequest, context: StatusOnlyCallContext)
-    -> EventLoopFuture<PubkeyResponse>
+  func filesExist(request: ServerRequest<FileListRequest>, context: ServerContext) async throws
+    -> ServerResponse<FileExistenceResponse>
   {
-    let promise = context.eventLoop.makePromise(of: PubkeyResponse.self)
-    Task {
-      let pubkey = await self.proxyMessageSigner.getPublicKey()
-      let response = PubkeyResponse.with {
-        if let pubkey = pubkey {
-          $0.pubkey = pubkey
-          $0.message = "get pubkey successfully"
-        } else {
-          $0.message = "failed to get pubkey"
-        }
+    let internalFilePath = await controlConfigs.modelListPath
+    let response = FileExistenceResponse.with {
+      $0.files = [String]()
+      $0.existences = [Bool]()
+      var fileList = [String]()
+      if let fileContent = try? String(
+        contentsOf: URL(fileURLWithPath: internalFilePath), encoding: .utf8)
+      {
+        fileList = fileContent.components(separatedBy: .newlines).filter { !$0.isEmpty }
+      } else {
+        logger.error("Proxy Server file list is nil")
       }
-      promise.succeed(response)
+      for file in request.message.files {
+        $0.files.append(file)
+        let existence = fileList.contains(file)
+        $0.existences.append(existence)
+      }
     }
-    return promise.futureResult
+    return ServerResponse(message: response)
   }
 
-  public func hours(request: HoursRequest, context: any StatusOnlyCallContext) -> EventLoopFuture<
-    HoursResponse
-  > {
-    let promise = context.eventLoop.makePromise(of: HoursResponse.self)
-    Task {
-      let (computeUnitPolicies, expirationTimestamp) =
-        await controlConfigs.getComputeUnitPolicyAndExpirationTimestamp()
-
-      let response = HoursResponse.with {
-
-        if let expiration = expirationTimestamp, Date() < expiration {
-          $0.thresholds = ComputeUnitThreshold.with {
-            $0.community = Double(
-              computeUnitPolicies["community"] ?? ComputeUnits.threshold(for: "community"))
-            $0.plus = Double(computeUnitPolicies["plus"] ?? ComputeUnits.threshold(for: "plus"))
-            $0.expireAt = Int64(expiration.timeIntervalSince1970)
-          }
-        }
+  public func pubkey(request: ServerRequest<PubkeyRequest>, context: ServerContext)
+    async throws -> ServerResponse<PubkeyResponse>
+  {
+    let pubkey = await self.proxyMessageSigner.getPublicKey()
+    let response = PubkeyResponse.with {
+      if let pubkey = pubkey {
+        $0.pubkey = pubkey
+        $0.message = "get pubkey successfully"
+      } else {
+        $0.message = "failed to get pubkey"
       }
-      promise.succeed(response)
     }
-    return promise.futureResult
+    return ServerResponse(message: response)
   }
 
-  func echo(request: EchoRequest, context: StatusOnlyCallContext) -> EventLoopFuture<EchoReply> {
-    let promise = context.eventLoop.makePromise(of: EchoReply.self)
-    Task {
-      let internalFilePath = await controlConfigs.modelListPath
-      let (computeUnitPolicies, expirationTimestamp) =
-        await controlConfigs.getComputeUnitPolicyAndExpirationTimestamp()
+  public func hours(request: ServerRequest<HoursRequest>, context: ServerContext) async throws
+    -> ServerResponse<HoursResponse>
+  {
+    let (computeUnitPolicies, expirationTimestamp) =
+      await controlConfigs.getComputeUnitPolicyAndExpirationTimestamp()
 
-      let response = EchoReply.with {
-        logger.info("Proxy Server Received echo from: \(request.name)")
-        $0.message = "Hello, \(request.name)!"
-        var fileList = [String]()
-        if let fileContent = try? String(
-          contentsOf: URL(fileURLWithPath: internalFilePath), encoding: .utf8)
-        {
-          fileList = fileContent.components(separatedBy: .newlines).filter { !$0.isEmpty }
-        } else {
-          logger.error("Proxy Server file list is nil")
-        }
-        $0.files = fileList
+    let response = HoursResponse.with {
 
-        if let expiration = expirationTimestamp, Date() < expiration {
-          $0.thresholds = ComputeUnitThreshold.with {
-            $0.community = Double(
-              computeUnitPolicies["community"] ?? ComputeUnits.threshold(for: "community"))
-            $0.plus = Double(computeUnitPolicies["plus"] ?? ComputeUnits.threshold(for: "plus"))
-            $0.expireAt = Int64(expiration.timeIntervalSince1970)
-          }
+      if let expiration = expirationTimestamp, Date() < expiration {
+        $0.thresholds = ComputeUnitThreshold.with {
+          $0.community = Double(
+            computeUnitPolicies["community"] ?? ComputeUnits.threshold(for: "community"))
+          $0.plus = Double(computeUnitPolicies["plus"] ?? ComputeUnits.threshold(for: "plus"))
+          $0.expireAt = Int64(expiration.timeIntervalSince1970)
         }
       }
-      promise.succeed(response)
     }
-    return promise.futureResult
+    return ServerResponse(message: response)
   }
 
-  func uploadFile(context: StreamingResponseCallContext<UploadResponse>) -> EventLoopFuture<
-    (StreamEvent<FileUploadRequest>) -> Void
-  > {
-    context.statusPromise.fail(GRPCStatus(code: .unimplemented, message: "Service not supported"))
-    return context.eventLoop.makeFailedFuture(
-      GRPCStatus(code: .unimplemented, message: "Service not supported")
-    )
+  func echo(request: ServerRequest<EchoRequest>, context: ServerContext) async throws
+    -> ServerResponse<EchoReply>
+  {
+    let internalFilePath = await controlConfigs.modelListPath
+    let (computeUnitPolicies, expirationTimestamp) =
+      await controlConfigs.getComputeUnitPolicyAndExpirationTimestamp()
+
+    let response = EchoReply.with {
+      logger.info("Proxy Server Received echo from: \(request.message.name)")
+      $0.message = "Hello, \(request.message.name)!"
+      var fileList = [String]()
+      if let fileContent = try? String(
+        contentsOf: URL(fileURLWithPath: internalFilePath), encoding: .utf8)
+      {
+        fileList = fileContent.components(separatedBy: .newlines).filter { !$0.isEmpty }
+      } else {
+        logger.error("Proxy Server file list is nil")
+      }
+      $0.files = fileList
+
+      if let expiration = expirationTimestamp, Date() < expiration {
+        $0.thresholds = ComputeUnitThreshold.with {
+          $0.community = Double(
+            computeUnitPolicies["community"] ?? ComputeUnits.threshold(for: "community"))
+          $0.plus = Double(computeUnitPolicies["plus"] ?? ComputeUnits.threshold(for: "plus"))
+          $0.expireAt = Int64(expiration.timeIntervalSince1970)
+        }
+      }
+    }
+    return ServerResponse(message: response)
+  }
+
+  func uploadFile(request: StreamingServerRequest<FileUploadRequest>, context: ServerContext)
+    async throws -> StreamingServerResponse<UploadResponse>
+  {
+    throw RPCError(code: .unimplemented, message: "Service not supported")
   }
 }
 
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 public class ProxyCPUServer {
   private let workers: [Worker]
   private let logger = Logger(label: "com.draw-things.image-generation-proxy-service")
@@ -1173,64 +1161,31 @@ public class ProxyCPUServer {
   }
 
   public func startControlPanel(hosts: [String], port: Int) async throws {
-    Task {
-      logger.info("Control Panel Service starting on \(hosts) , port \(port)")
-      let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-      let controlPanelService = ControlPanelService(
-        taskQueue: taskQueue, controlConfigs: controlConfigs, logger: logger,
-        proxyMessageSigner: proxyMessageSigner)
-
-      var serverBindings: [EventLoopFuture<Server>] = []
-
-      // Start all servers
+    logger.info("Control Panel Service starting on \(hosts) , port \(port)")
+    try await withThrowingTaskGroup(of: Void.self) { group in
       for host in hosts {
-        let binding = Server.insecure(group: group)
-          .withServiceProviders([controlPanelService])
-          .bind(host: host, port: port)
-        serverBindings.append(binding)
-        logger.info("Control Panel Service started on \(host):\(port)")
-      }
-
-      // Wait for all servers to bind
-      let servers = try await EventLoopFuture.whenAllSucceed(serverBindings, on: group.next()).get()
-
-      // Wait for any server to close (first one that closes)
-      let onCloseFutures = servers.map { $0.onClose }
-      let _ = try await EventLoopFuture.whenAllComplete(onCloseFutures, on: group.next()).get()
-
-      logger.info("Leave Control Panel Service, something may be wrong")
-      try await group.syncShutdownGracefully()
-    }
-  }
-
-  private static func certificatesFromPEMFile(_ path: String) throws -> [NIOSSLCertificate] {
-    let pemContent = try String(contentsOfFile: path, encoding: .utf8)
-    var certificates: [NIOSSLCertificate] = []
-
-    // Split by certificate markers and clean up
-    let pemComponents = pemContent.components(separatedBy: "-----BEGIN CERTIFICATE-----")
-      .filter { !$0.isEmpty }
-      .compactMap { component -> String? in
-        guard let endMarkerRange = component.range(of: "-----END CERTIFICATE-----") else {
-          return nil
+        let taskQueue = self.taskQueue
+        let controlConfigs = self.controlConfigs
+        let logger = self.logger
+        let proxyMessageSigner = self.proxyMessageSigner
+        group.addTask {
+          let controlPanelService = ControlPanelProxyService(
+            taskQueue: taskQueue, controlConfigs: controlConfigs, logger: logger,
+            proxyMessageSigner: proxyMessageSigner)
+          let transport = HTTP2ServerTransport.Posix(
+            address: .ipv4(host: host, port: port),
+            transportSecurity: .plaintext
+          )
+          let server = GRPCServer(
+            transport: transport,
+            services: [controlPanelService as any RegistrableRPCService]
+          )
+          logger.info("Control Panel Service started on \(host):\(port)")
+          try await server.serve()
         }
-        let certContent = "-----BEGIN CERTIFICATE-----" + component[..<endMarkerRange.upperBound]
-        // Ensure the certificate has both markers and proper content between them
-        guard certContent.hasSuffix("-----END CERTIFICATE-----") else {
-          return nil
-        }
-        return certContent.trimmingCharacters(in: .whitespacesAndNewlines)
       }
-
-    for pemCert in pemComponents {
-      let certData = Array(pemCert.utf8)
-      guard let cert = try? NIOSSLCertificate(bytes: certData, format: .pem) else {
-        continue
-      }
-      certificates.append(cert)
+      try await group.waitForAll()
     }
-
-    return certificates
   }
 
   public func startAndWait(
@@ -1240,45 +1195,41 @@ public class ProxyCPUServer {
     async throws
   {
     logger.info("ImageGenerationProxyService starting on \(host):\(port)")
-    let group = MultiThreadedEventLoopGroup(numberOfThreads: numberOfThreads)
     let proxyService = ImageGenerationProxyService(
       taskQueue: taskQueue, controlConfigs: controlConfigs, logger: logger,
       healthCheck: healthCheck, proxyMessageSigner: proxyMessageSigner
     )
-    let imageServer: Server
-    if TLS {
-      let certificates: [NIOSSLCertificate]
-      let privateKey: NIOSSLPrivateKey
-      if !certPath.isEmpty && !keyPath.isEmpty {
-        certificates = try ProxyCPUServer.certificatesFromPEMFile(certPath)
-        privateKey = try NIOSSLPrivateKey(file: keyPath, format: .pem)
-      } else {
-        certificates = [
-          try NIOSSLCertificate(bytes: [UInt8](BinaryResources.server_crt_crt), format: .pem)
-        ]
-        privateKey = try NIOSSLPrivateKey(
-          bytes: [UInt8](BinaryResources.server_key_key), format: .pem)
-      }
-      let certificateSources = certificates.map { NIOSSLCertificateSource.certificate($0) }
-      imageServer = try Server.usingTLS(
-        with: GRPCTLSConfiguration.makeServerConfigurationBackedByNIOSSL(
-          certificateChain: certificateSources, privateKey: .privateKey(privateKey)),
-        on: group
-      )
-      .withServiceProviders([proxyService])
-      .withMaximumReceiveMessageLength(1024 * 1024 * 1024)
-      .bind(host: host, port: port).wait()
-    } else {
 
-      imageServer = try Server.insecure(group: group)
-        .withServiceProviders([proxyService])
-        .withMaximumReceiveMessageLength(1024 * 1024 * 1024)
-        .bind(host: host, port: port).wait()
+    var config = HTTP2ServerTransport.Posix.Config.defaults
+    config.rpc.maxRequestPayloadSize = 1024 * 1024 * 1024
+
+    let transportSecurity: HTTP2ServerTransport.Posix.TransportSecurity
+    if TLS {
+      if !certPath.isEmpty && !keyPath.isEmpty {
+        transportSecurity = .tls(
+          certificateChain: [.file(path: certPath, format: .pem)],
+          privateKey: .file(path: keyPath, format: .pem)
+        )
+      } else {
+        transportSecurity = .tls(
+          certificateChain: [.bytes([UInt8](BinaryResources.server_crt_crt), format: .pem)],
+          privateKey: .bytes([UInt8](BinaryResources.server_key_key), format: .pem)
+        )
+      }
+    } else {
+      transportSecurity = .plaintext
     }
 
+    let transport = HTTP2ServerTransport.Posix(
+      address: .ipv4(host: host, port: port),
+      transportSecurity: transportSecurity,
+      config: config,
+      eventLoopGroup: .singletonMultiThreadedEventLoopGroup
+    )
+    let imageServer = GRPCServer(transport: transport, services: [proxyService])
     logger.info("Image Generation Proxy Service started on port \(host):\(port)")
-    try await imageServer.onClose.get()
-    try await group.syncShutdownGracefully()
+    _ = numberOfThreads
+    try await imageServer.serve()
   }
 
 }
