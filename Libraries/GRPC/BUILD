@@ -145,7 +145,8 @@ swift_library(
     module_name = "GRPCControlPanelModels",
     visibility = ["//visibility:public"],
     deps = [
-        "@grpc-swift//:GRPC",
+        "@grpc-swift-2//:GRPCCore",
+        "@grpc-swift-protobuf//:GRPCProtobuf",
     ],
 )
 
@@ -182,6 +183,7 @@ swift_library(
     module_name = "GRPCImageServiceModels",
     visibility = ["//visibility:public"],
     deps = [
-        "@grpc-swift//:GRPC",
+        "@grpc-swift-2//:GRPCCore",
+        "@grpc-swift-protobuf//:GRPCProtobuf",
     ],
 )
