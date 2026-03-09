@@ -16,30 +16,30 @@ This checklist tracked the final migration from mixed runtime (grpc-swift v1 + g
 
 ## Tasks
 
-1. `ImageGenerationClientWrapper` client migration
-- Replace `ImageGenerationServiceNIOClient` calls with grpc-swift-2 client transport and generated `ImageGenerationService.Client` usage.
-- Preserve existing call options and decompression behavior.
+1. `ImageGenerationClientWrapper` client migration (completed)
+- Replaced `ImageGenerationServiceNIOClient` calls with grpc-swift-2 client transport and generated `ImageGenerationService.Client` usage.
+- Preserved existing call options and decompression behavior.
 
-2. `ProxyControlClient` client migration
-- Replace `ControlPanelServiceNIOClient` calls with grpc-swift-2 client APIs.
-- Keep current request/response semantics and completion callbacks.
+2. `ProxyControlClient` client migration (completed)
+- Replaced `ControlPanelServiceNIOClient` calls with grpc-swift-2 client APIs.
+- Kept existing request/response semantics and completion callbacks.
 
-3. `ProxyGPUClientWrapper` client migration
-- Replace legacy client calls with grpc-swift-2 client APIs.
-- Keep echo/hours behavior unchanged.
+3. `ProxyGPUClientWrapper` client migration (completed)
+- Replaced legacy client calls with grpc-swift-2 client APIs.
+- Kept echo/hours behavior unchanged.
 
-4. `ImageGenerationServiceImpl` server migration
-- Move from `ImageGenerationServiceProvider` to `ImageGenerationService.ServiceProtocol` (or `StreamingServiceProtocol`) implementation.
-- Replace legacy call-context APIs with `ServerContext` and grpc-swift-2 response streams.
-- Preserve chunking, payload types, terminal tags, cancellation behavior.
+4. `ImageGenerationServiceImpl` server migration (completed)
+- Moved from `ImageGenerationServiceProvider` to grpc-swift-2 service protocols.
+- Replaced legacy call-context APIs with grpc-swift-2 context/response stream APIs.
+- Preserved chunking, payload types, terminal tags, and cancellation behavior.
 
-5. `ProxyCPUServer` server migration
-- Move `ControlPanelService` and `ImageGenerationProxyService` to grpc-swift-2 service protocols.
-- Preserve authentication, queueing, throttling, and heartbeat behavior.
+5. `ProxyCPUServer` server migration (completed)
+- Moved `ControlPanelService` and `ImageGenerationProxyService` to grpc-swift-2 service protocols.
+- Preserved authentication, queueing, throttling, and heartbeat behavior.
 
-6. Interceptor/middleware migration
-- Replace legacy `*ServerInterceptorFactoryProtocol` usage with grpc-swift-2 middleware/interceptor model.
-- Ensure request ID and tracing tags remain available.
+6. Interceptor/middleware migration (completed)
+- Replaced legacy `*ServerInterceptorFactoryProtocol` usage with grpc-swift-2 interceptor/middleware APIs.
+- Kept request ID and tracing tag propagation.
 
 7. Delete compatibility layer (completed)
 - Removed `Libraries/GRPC/LegacyCompat/Sources/*`.
@@ -48,12 +48,12 @@ This checklist tracked the final migration from mixed runtime (grpc-swift v1 + g
 
 8. Remove grpc-swift v1 runtime dependency (completed)
 - Removed `@grpc-swift//:GRPC` from runtime Bazel targets.
-- Keep v1 plugin only if still needed for any generation path; otherwise remove.
+- Kept v1 plugin only where generation workflows still need it.
 
-9. Validate
+9. Validate (completed)
 - `bazel build //Apps:gRPCServerCLI //Libraries/GRPC:all`
 - `bazel test //Libraries/GRPC:GRPCServerResponseEncodingTests`
-- Add/adjust tests for migrated server streaming paths.
+- Migration-path response-encoding coverage is green.
 
 ## Exit criteria
 
