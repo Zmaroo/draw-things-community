@@ -60,12 +60,14 @@ private func tensorFromEncodedImageData(_ data: Data) -> Tensor<FloatType>? {
   #endif
 }
 
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 public enum RemoteImageGeneratorError: Error {
   case notConnected
   case failedWithStatus(RPCError)
   case failedWithError(Error)
 }
 
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension DeviceType {
   init(from type: ImageGeneratorDeviceType) {
     switch type {
@@ -79,6 +81,7 @@ extension DeviceType {
   }
 }
 
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 public struct RemoteImageGenerator: ImageGenerator {
   private let logger = Logger(label: "com.draw-things.remote-image-generator")
   public let client: ImageGenerationClientWrapper
@@ -176,9 +179,9 @@ public struct RemoteImageGenerator: ImageGenerator {
     request.user = name
     request.device = DeviceType(from: deviceType)
     request.chunked = true
-    request.responseFormat = .responseFormatPng
-    request.previewResponseFormat = .responseFormatPng
-    request.finalResponseFormat = .responseFormatPng
+    request.responseFormat = .png
+    request.previewResponseFormat = .png
+    request.finalResponseFormat = .png
     if let sharedSecret = sharedSecret {
       request.sharedSecret = sharedSecret
     }
@@ -263,16 +266,90 @@ public struct RemoteImageGenerator: ImageGenerator {
     // Send the request
     // handler is running on event group thread
     let logger = logger
-    var lastChunk = Data()
-    var tensors = [Tensor<FloatType>]()
-    var lastAudioChunk = Data()
-    var audios = [Tensor<Float>]()
-    var scaleFactor: Int = 1
-    let cancellationQueue = DispatchQueue(label: "RemoteImageGenerator.cancellation")
-    var shouldCancel = false
+
+    final class StreamState: @unchecked Sendable {
+      private let queue = DispatchQueue(label: "RemoteImageGenerator.streamState")
+      private var lastChunk = Data()
+      private var tensors = [Tensor<FloatType>]()
+      private var lastAudioChunk = Data()
+      private var audios = [Tensor<Float>]()
+      private var scaleFactor: Int = 1
+      private var shouldCancel = false
+      private var usedDedicatedRemoteDownload = false
+
+      func requestCancel() {
+        queue.sync { shouldCancel = true }
+      }
+
+      func isCancelled() -> Bool {
+        queue.sync { shouldCancel }
+      }
+
+      func setUsedDedicatedRemoteDownload(_ value: Bool) {
+        queue.sync { usedDedicatedRemoteDownload = value }
+      }
+
+      func usesDedicatedRemoteDownload() -> Bool {
+        queue.sync { usedDedicatedRemoteDownload }
+      }
+
+      func imageDataForChunk(index: Int, chunk: Data) -> Data {
+        queue.sync {
+          if index == 0, !lastChunk.isEmpty {
+            return lastChunk + chunk
+          }
+          return chunk
+        }
+      }
+
+      func clearImageChunkBuffer() {
+        queue.sync { lastChunk = Data() }
+      }
+
+      func appendImageChunk(_ chunk: Data) {
+        queue.sync { lastChunk += chunk }
+      }
+
+      func appendImageTensors(_ imageTensors: [Tensor<FloatType>]) {
+        queue.sync { tensors.append(contentsOf: imageTensors) }
+      }
+
+      func audioDataForChunk(index: Int, chunk: Data) -> Data {
+        queue.sync {
+          if index == 0, !lastAudioChunk.isEmpty {
+            return lastAudioChunk + chunk
+          }
+          return chunk
+        }
+      }
+
+      func clearAudioChunkBuffer() {
+        queue.sync { lastAudioChunk = Data() }
+      }
+
+      func appendAudioChunk(_ chunk: Data) {
+        queue.sync { lastAudioChunk += chunk }
+      }
+
+      func appendAudioTensors(_ audioTensors: [Tensor<Float>]) {
+        queue.sync { audios.append(contentsOf: audioTensors) }
+      }
+
+      func setScaleFactor(_ value: Int) {
+        queue.sync { scaleFactor = value }
+      }
+
+      func finalResults() -> ([Tensor<FloatType>], [Tensor<Float>]?, Int) {
+        queue.sync {
+          (tensors, audios.isEmpty ? nil : audios, scaleFactor)
+        }
+      }
+    }
+
+    let streamState = StreamState()
     var metadata: Metadata = [:]
     if let bearer = bearer {
-      metadata["authorization"] = "bearer \(bearer)"
+      metadata.addString("bearer \(bearer)", forKey: "authorization")
     }
 
     let callOptions = CallOptions.defaults
@@ -281,25 +358,47 @@ public struct RemoteImageGenerator: ImageGenerator {
     var completionError: RemoteImageGeneratorError? = nil
 
     cancellation {
-      cancellationQueue.sync {
-        shouldCancel = true
-      }
+      streamState.requestCancel()
     }
 
     Task {
       defer { completionSemaphore.signal() }
       do {
+        var remoteDownloadRequest = RemoteDownloadRequest()
+        remoteDownloadRequest.configuration = request.configuration
+        if let sharedSecret = sharedSecret {
+          remoteDownloadRequest.sharedSecret = sharedSecret
+        }
+        do {
+          try await client.remoteDownload(
+            remoteDownloadRequest,
+            metadata: metadata,
+            options: callOptions
+          ) { streamingResponse in
+            for try await update in streamingResponse.messages {
+              transferDataCallback?.remoteDownloads(
+                update.bytesReceived,
+                update.bytesExpected,
+                Int(update.item),
+                Int(update.itemsExpected))
+            }
+          }
+          streamState.setUsedDedicatedRemoteDownload(true)
+        } catch let rpcError as RPCError where rpcError.code == .unimplemented {
+          logger.info("RemoteDownload RPC unavailable; fallback to GenerateImage stream progress")
+        }
+
         try await client.generateImage(
           request,
           metadata: metadata,
           options: callOptions
         ) { streamingResponse in
           for try await response in streamingResponse.messages {
-            let isCancelled = cancellationQueue.sync { shouldCancel }
+            let isCancelled = streamState.isCancelled()
             if isCancelled {
               throw CancellationError()
             }
-            if response.hasRemoteDownload {
+            if !streamState.usesDedicatedRemoteDownload(), response.hasRemoteDownload {
               transferDataCallback?.remoteDownloads(
                 response.remoteDownload.bytesReceived, response.remoteDownload.bytesExpected,
                 Int(response.remoteDownload.item), Int(response.remoteDownload.itemsExpected))
@@ -311,21 +410,17 @@ public struct RemoteImageGenerator: ImageGenerator {
                 imageTensors = response.generatedImages.enumerated().compactMap {
                   i, generatedImageData in
                   let imageData: Data
-                  if i == 0, !lastChunk.isEmpty {
-                    imageData = lastChunk + generatedImageData
-                  } else {
-                    imageData = generatedImageData
-                  }
+                  imageData = streamState.imageDataForChunk(index: i, chunk: generatedImageData)
                   switch response.finalPayloadType {
-                  case .responsePayloadTypeTensor:
+                  case .tensor:
                     if let image = Tensor<FloatType>(data: imageData, using: [.zip, .fpzip]) {
                       return Tensor<FloatType>(from: image)
                     }
-                  case .responsePayloadTypePng, .responsePayloadTypeJpeg:
+                  case .png, .jpeg:
                     if let image = tensorFromEncodedImageData(imageData) {
                       return image
                     }
-                  case .responsePayloadTypeUnspecified, .UNRECOGNIZED:
+                  case .unspecified, .UNRECOGNIZED:
                     if let image = Tensor<FloatType>(data: imageData, using: [.zip, .fpzip]) {
                       return Tensor<FloatType>(from: image)
                     } else if let image = tensorFromEncodedImageData(imageData) {
@@ -334,17 +429,17 @@ public struct RemoteImageGenerator: ImageGenerator {
                   }
                   return nil
                 }
-                lastChunk = Data()
+                streamState.clearImageChunkBuffer()
               case .moreChunks:
                 if let first = response.generatedImages.first {
-                  lastChunk += first
+                  streamState.appendImageChunk(first)
                 }
                 imageTensors = []
               case .UNRECOGNIZED(_):
                 imageTensors = []
               }
               logger.info("Received generated image data")
-              tensors.append(contentsOf: imageTensors)
+              streamState.appendImageTensors(imageTensors)
             }
             if !response.generatedAudio.isEmpty {
               let audioTensors: [Tensor<Float>]
@@ -353,28 +448,24 @@ public struct RemoteImageGenerator: ImageGenerator {
                 audioTensors = response.generatedAudio.enumerated().compactMap {
                   i, generatedAudioData in
                   let audioData: Data
-                  if i == 0, !lastAudioChunk.isEmpty {
-                    audioData = lastAudioChunk + generatedAudioData
-                  } else {
-                    audioData = generatedAudioData
-                  }
+                  audioData = streamState.audioDataForChunk(index: i, chunk: generatedAudioData)
                   if let audio = Tensor<Float>(data: audioData, using: [.zip, .fpzip]) {
                     return Tensor<Float>(from: audio)
                   } else {
                     return nil
                   }
                 }
-                lastAudioChunk = Data()
+                streamState.clearAudioChunkBuffer()
               case .moreChunks:
                 if let first = response.generatedAudio.first {
-                  lastAudioChunk += first
+                  streamState.appendAudioChunk(first)
                 }
                 audioTensors = []
               case .UNRECOGNIZED(_):
                 audioTensors = []
               }
               logger.info("Received generated audio data")
-              audios.append(contentsOf: audioTensors)
+              streamState.appendAudioTensors(audioTensors)
             }
             if response.hasDownloadSize && response.downloadSize > 0 {
               transferDataCallback?.beginDownload(Int(response.downloadSize))
@@ -389,15 +480,15 @@ public struct RemoteImageGenerator: ImageGenerator {
               var previewTensor: Tensor<FloatType>? = nil
               if response.hasPreviewImage {
                 switch response.previewPayloadType {
-                case .responsePayloadTypeTensor:
+                case .tensor:
                   if let tensor = Tensor<FloatType>(
                     data: response.previewImage, using: [.zip, .fpzip])
                   {
                     previewTensor = Tensor<FloatType>(from: tensor)
                   }
-                case .responsePayloadTypePng, .responsePayloadTypeJpeg:
+                case .png, .jpeg:
                   previewTensor = tensorFromEncodedImageData(response.previewImage)
-                case .responsePayloadTypeUnspecified, .UNRECOGNIZED:
+                case .unspecified, .UNRECOGNIZED:
                   if let tensor = Tensor<FloatType>(
                     data: response.previewImage, using: [.zip, .fpzip])
                   {
@@ -410,14 +501,12 @@ public struct RemoteImageGenerator: ImageGenerator {
               let isGenerating = feedback(currentSignpost, signpostsSet, previewTensor)
               if !isGenerating {
                 logger.info("Stream cancel image generating")
-                cancellationQueue.sync {
-                  shouldCancel = true
-                }
+                streamState.requestCancel()
                 throw CancellationError()
               }
             }
             if response.hasScaleFactor {
-              scaleFactor = Int(response.scaleFactor)
+              streamState.setScaleFactor(Int(response.scaleFactor))
             }
           }
           return ()
@@ -441,9 +530,10 @@ public struct RemoteImageGenerator: ImageGenerator {
     }
 
     completionSemaphore.wait()
+    let (tensors, audios, scaleFactor) = streamState.finalResults()
     if tensors.isEmpty, let completionError = resultQueue.sync(execute: { completionError }) {
       throw completionError
     }
-    return (tensors, audios.isEmpty ? nil : audios, scaleFactor)
+    return (tensors, audios, scaleFactor)
   }
 }

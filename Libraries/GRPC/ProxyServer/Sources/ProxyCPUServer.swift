@@ -1036,6 +1036,15 @@ final class ImageGenerationProxyService: ImageGenerationService.ServiceProtocol 
     }
   }
 
+  func remoteDownload(
+    request: ServerRequest<RemoteDownloadRequest>,
+    context: ServerContext
+  ) async throws -> StreamingServerResponse<RemoteDownloadResponse> {
+    _ = request
+    _ = context
+    throw RPCError(code: .unimplemented, message: "RemoteDownload is not supported on proxy")
+  }
+
   func filesExist(request: ServerRequest<FileListRequest>, context: ServerContext) async throws
     -> ServerResponse<FileExistenceResponse>
   {

@@ -32,6 +32,18 @@ public enum ImageGenerationService: Sendable {
                 method: "GenerateImage"
             )
         }
+        /// Namespace for "RemoteDownload" metadata.
+        public enum RemoteDownload: Sendable {
+            /// Request type for "RemoteDownload".
+            public typealias Input = RemoteDownloadRequest
+            /// Response type for "RemoteDownload".
+            public typealias Output = RemoteDownloadResponse
+            /// Descriptor for "RemoteDownload".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "ImageGenerationService"),
+                method: "RemoteDownload"
+            )
+        }
         /// Namespace for "FilesExist" metadata.
         public enum FilesExist: Sendable {
             /// Request type for "FilesExist".
@@ -95,6 +107,7 @@ public enum ImageGenerationService: Sendable {
         /// Descriptors for all methods in the "ImageGenerationService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             GenerateImage.descriptor,
+            RemoteDownload.descriptor,
             FilesExist.descriptor,
             UploadFile.descriptor,
             Echo.descriptor,
@@ -138,6 +151,20 @@ extension ImageGenerationService {
             request: GRPCCore.StreamingServerRequest<ImageGenerationRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<ImageGenerationResponse>
+
+        /// Handle the "RemoteDownload" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `RemoteDownloadRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `RemoteDownloadResponse` messages.
+        func remoteDownload(
+            request: GRPCCore.StreamingServerRequest<RemoteDownloadRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<RemoteDownloadResponse>
 
         /// Handle the "FilesExist" method.
         ///
@@ -232,6 +259,20 @@ extension ImageGenerationService {
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<ImageGenerationResponse>
 
+        /// Handle the "RemoteDownload" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `RemoteDownloadRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `RemoteDownloadResponse` messages.
+        func remoteDownload(
+            request: GRPCCore.ServerRequest<RemoteDownloadRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<RemoteDownloadResponse>
+
         /// Handle the "FilesExist" method.
         ///
         /// - Parameters:
@@ -324,6 +365,21 @@ extension ImageGenerationService {
             context: GRPCCore.ServerContext
         ) async throws
 
+        /// Handle the "RemoteDownload" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `RemoteDownloadRequest` message.
+        ///   - response: A response stream of `RemoteDownloadResponse` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        func remoteDownload(
+            request: RemoteDownloadRequest,
+            response: GRPCCore.RPCWriter<RemoteDownloadResponse>,
+            context: GRPCCore.ServerContext
+        ) async throws
+
         /// Handle the "FilesExist" method.
         ///
         /// - Parameters:
@@ -413,6 +469,17 @@ extension ImageGenerationService.StreamingServiceProtocol {
             }
         )
         router.registerHandler(
+            forMethod: ImageGenerationService.Method.RemoteDownload.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<RemoteDownloadRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<RemoteDownloadResponse>(),
+            handler: { request, context in
+                try await self.remoteDownload(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
             forMethod: ImageGenerationService.Method.FilesExist.descriptor,
             deserializer: GRPCProtobuf.ProtobufDeserializer<FileListRequest>(),
             serializer: GRPCProtobuf.ProtobufSerializer<FileExistenceResponse>(),
@@ -484,6 +551,17 @@ extension ImageGenerationService.ServiceProtocol {
         return response
     }
 
+    public func remoteDownload(
+        request: GRPCCore.StreamingServerRequest<RemoteDownloadRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<RemoteDownloadResponse> {
+        let response = try await self.remoteDownload(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return response
+    }
+
     public func filesExist(
         request: GRPCCore.StreamingServerRequest<FileListRequest>,
         context: GRPCCore.ServerContext
@@ -540,6 +618,23 @@ extension ImageGenerationService.SimpleServiceProtocol {
             metadata: [:],
             producer: { writer in
                 try await self.generateImage(
+                    request: request.message,
+                    response: writer,
+                    context: context
+                )
+                return [:]
+            }
+        )
+    }
+
+    public func remoteDownload(
+        request: GRPCCore.ServerRequest<RemoteDownloadRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<RemoteDownloadResponse> {
+        return GRPCCore.StreamingServerResponse<RemoteDownloadResponse>(
+            metadata: [:],
+            producer: { writer in
+                try await self.remoteDownload(
                     request: request.message,
                     response: writer,
                     context: context
@@ -645,6 +740,25 @@ extension ImageGenerationService {
             deserializer: some GRPCCore.MessageDeserializer<ImageGenerationResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<ImageGenerationResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "RemoteDownload" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `RemoteDownloadRequest` message.
+        ///   - serializer: A serializer for `RemoteDownloadRequest` messages.
+        ///   - deserializer: A deserializer for `RemoteDownloadResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func remoteDownload<Result>(
+            request: GRPCCore.ClientRequest<RemoteDownloadRequest>,
+            serializer: some GRPCCore.MessageSerializer<RemoteDownloadRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<RemoteDownloadResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<RemoteDownloadResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "FilesExist" method.
@@ -780,6 +894,34 @@ extension ImageGenerationService {
             try await self.client.serverStreaming(
                 request: request,
                 descriptor: ImageGenerationService.Method.GenerateImage.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "RemoteDownload" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `RemoteDownloadRequest` message.
+        ///   - serializer: A serializer for `RemoteDownloadRequest` messages.
+        ///   - deserializer: A deserializer for `RemoteDownloadResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func remoteDownload<Result>(
+            request: GRPCCore.ClientRequest<RemoteDownloadRequest>,
+            serializer: some GRPCCore.MessageSerializer<RemoteDownloadRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<RemoteDownloadResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<RemoteDownloadResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.serverStreaming(
+                request: request,
+                descriptor: ImageGenerationService.Method.RemoteDownload.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -963,6 +1105,29 @@ extension ImageGenerationService.ClientProtocol {
         )
     }
 
+    /// Call the "RemoteDownload" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `RemoteDownloadRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func remoteDownload<Result>(
+        request: GRPCCore.ClientRequest<RemoteDownloadRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<RemoteDownloadResponse>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        try await self.remoteDownload(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<RemoteDownloadRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<RemoteDownloadResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "FilesExist" method.
     ///
     /// - Parameters:
@@ -1111,6 +1276,33 @@ extension ImageGenerationService.ClientProtocol {
             metadata: metadata
         )
         return try await self.generateImage(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RemoteDownload" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func remoteDownload<Result>(
+        _ message: RemoteDownloadRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<RemoteDownloadResponse>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<RemoteDownloadRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.remoteDownload(
             request: request,
             options: options,
             onResponse: handleResponse

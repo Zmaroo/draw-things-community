@@ -2,6 +2,7 @@ syntax = "proto3";
 
 service ImageGenerationService {
   rpc GenerateImage(ImageGenerationRequest) returns (stream ImageGenerationResponse);
+  rpc RemoteDownload(RemoteDownloadRequest) returns (stream RemoteDownloadResponse);
   rpc FilesExist(FileListRequest) returns (FileExistenceResponse);
   rpc UploadFile(stream FileUploadRequest) returns (stream UploadResponse);
   rpc Echo(EchoRequest) returns (EchoReply);
@@ -34,6 +35,11 @@ message FileListRequest {
   repeated string files = 1;
   repeated string filesWithHash = 2;
   optional string sharedSecret = 3; // The secret use to authenticate if needed.
+}
+
+message RemoteDownloadRequest {
+  bytes configuration = 1; // Configuration data as bytes (FlatBuffer).
+  optional string sharedSecret = 2; // The secret use to authenticate if needed.
 }
 
 message FileExistenceResponse {

@@ -153,8 +153,8 @@ public final class ImageGenerationServiceImpl: @unchecked Sendable,
     RPCError(code: code, message: message, cause: cause)
   }
 
-  private func writeResponseSynchronously(
-    _ value: ImageGenerationResponse, to writer: RPCWriter<ImageGenerationResponse>
+  private func writeResponseSynchronously<Value>(
+    _ value: Value, to writer: RPCWriter<Value>
   ) throws {
     let semaphore = DispatchSemaphore(value: 0)
     let resultQueue = DispatchQueue(label: "ImageGenerationServiceImpl.writeResponse.result")
@@ -234,6 +234,7 @@ public final class ImageGenerationServiceImpl: @unchecked Sendable,
       ("preview_single_payload", "true"),
       ("default_response", "tensor"),
       ("model_browsing", enableModelBrowsing ? "true" : "false"),
+      ("remote_download_rpc", "true"),
     ]
     return values.map { "\($0.0)=\($0.1)" }.joined(separator: ";")
   }
@@ -263,6 +264,38 @@ public final class ImageGenerationServiceImpl: @unchecked Sendable,
       tags.append("is_terminal=\(isTerminal)")
     }
     return tags
+  }
+
+  private func rewriteConfiguration(
+    _ configuration: GenerationConfiguration,
+    progress: @escaping (_ bytesReceived: Int64, _ bytesExpected: Int64, _ index: Int, _ total: Int)
+      -> Void
+  ) throws -> GenerationConfiguration {
+    guard let serverConfigurationRewriter = serverConfigurationRewriter else {
+      return configuration
+    }
+
+    var cancellation: ProtectedValue<(() -> Void)?> = ProtectedValue(nil)
+    var rewriteResult: Result<GenerationConfiguration, any Error>?
+    let rewriteWait = DispatchSemaphore(value: 0)
+
+    serverConfigurationRewriter.newConfiguration(configuration: configuration) {
+      bytesReceived, bytesExpected, index, total in
+      progress(bytesReceived, bytesExpected, index, total)
+    } cancellation: { cancellationBlock in
+      cancellation.modify { $0 = cancellationBlock }
+    } completion: { result in
+      rewriteResult = result
+      rewriteWait.signal()
+    }
+
+    rewriteWait.wait()
+    cancellation.modify { $0 = nil }
+
+    guard let rewriteResult = rewriteResult else {
+      throw rpcError(code: .internalError, message: "Missing rewrite result.")
+    }
+    return try rewriteResult.get()
   }
 
   private func validateGenerationRequest(
@@ -339,57 +372,74 @@ public final class ImageGenerationServiceImpl: @unchecked Sendable,
         }
 
         do {
-          if let serverConfigurationRewriter = self.serverConfigurationRewriter {
-            var cancellation: ProtectedValue<(() -> Void)?> = ProtectedValue(nil)
-            var rewriteResult: Result<GenerationConfiguration, any Error>?
-            let rewriteWait = DispatchSemaphore(value: 0)
-
-            serverConfigurationRewriter.newConfiguration(configuration: configuration) {
-              bytesReceived, bytesExpected, index, total in
-              let update = ImageGenerationResponse.with {
-                $0.remoteDownload = RemoteDownloadResponse.with {
-                  $0.bytesExpected = bytesExpected
-                  $0.bytesReceived = bytesReceived
-                  $0.item = Int32(index)
-                  $0.itemsExpected = Int32(total)
-                }
-                $0.tags = Self.grpcTraceTags(
-                  requestID: requestID,
-                  eventType: "remote_download",
-                  isTerminal: false
-                )
+          let rewrittenConfiguration = try self.rewriteConfiguration(configuration) {
+            bytesReceived, bytesExpected, index, total in
+            let update = ImageGenerationResponse.with {
+              $0.remoteDownload = RemoteDownloadResponse.with {
+                $0.bytesExpected = bytesExpected
+                $0.bytesReceived = bytesReceived
+                $0.item = Int32(index)
+                $0.itemsExpected = Int32(total)
               }
-              try? self.writeResponseSynchronously(update, to: response)
-            } cancellation: { cancellationBlock in
-              cancellation.modify { $0 = cancellationBlock }
-            } completion: { result in
-              rewriteResult = result
-              rewriteWait.signal()
+              $0.tags = Self.grpcTraceTags(
+                requestID: requestID,
+                eventType: "remote_download",
+                isTerminal: false
+              )
             }
-
-            rewriteWait.wait()
-            cancellation.modify { $0 = nil }
-            let rewrittenConfiguration = try rewriteResult!.get()
-
-            try self.generateImage(
-              configuration: rewrittenConfiguration,
-              request: request,
-              response: response,
-              responseCompression: responseCompression,
-              context: context,
-              requestID: requestID
-            )
-          } else {
-            try self.generateImage(
-              configuration: configuration,
-              request: request,
-              response: response,
-              responseCompression: responseCompression,
-              context: context,
-              requestID: requestID
-            )
+            try? self.writeResponseSynchronously(update, to: response)
           }
 
+          try self.generateImage(
+            configuration: rewrittenConfiguration,
+            request: request,
+            response: response,
+            responseCompression: responseCompression,
+            context: context,
+            requestID: requestID
+          )
+
+          continuation.resume()
+        } catch {
+          continuation.resume(throwing: error)
+        }
+      }
+    }
+  }
+
+  public func remoteDownload(
+    request: RemoteDownloadRequest,
+    response: RPCWriter<RemoteDownloadResponse>,
+    context _: ServerContext
+  ) async throws {
+    if let sharedSecret = sharedSecret, !sharedSecret.isEmpty, request.sharedSecret != sharedSecret
+    {
+      throw rpcError(code: .unauthenticated, message: "Shared secret mismatch.")
+    }
+
+    let runQueue = usesBackupQueue.load(ordering: .acquiring) ? backupQueue : queue
+    let configuration = GenerationConfiguration.from(data: request.configuration)
+
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      runQueue.async { [weak self] in
+        guard let self = self else {
+          continuation.resume(
+            throwing: RPCError(
+              code: .internalError, message: "ImageGenerationServiceImpl deallocated."))
+          return
+        }
+
+        do {
+          _ = try self.rewriteConfiguration(configuration) {
+            bytesReceived, bytesExpected, index, total in
+            let update = RemoteDownloadResponse.with {
+              $0.bytesExpected = bytesExpected
+              $0.bytesReceived = bytesReceived
+              $0.item = Int32(index)
+              $0.itemsExpected = Int32(total)
+            }
+            try? self.writeResponseSynchronously(update, to: response)
+          }
           continuation.resume()
         } catch {
           continuation.resume(throwing: error)
