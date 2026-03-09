@@ -161,6 +161,7 @@ swift_library(
         ":CNIOLinux",
         ":CNIOWindows",
         ":NIOConcurrencyHelpers",
+        ":_NIOBase64",
         "@SwiftCollections//:Collections",
         "@swift-atomics//:SwiftAtomics",
     ],
@@ -241,6 +242,16 @@ swift_library(
         ":NIOCore",
         "@SwiftCollections//:Collections",
     ],
+)
+
+swift_library(
+    name = "_NIOBase64",
+    srcs = glob([
+        "Sources/_NIOBase64/*.swift",
+    ]),
+    module_name = "_NIOBase64",
+    visibility = ["//visibility:public"],
+    deps = [],
 )
 
 swift_library(

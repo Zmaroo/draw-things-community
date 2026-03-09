@@ -81,37 +81,38 @@ extension Worker {
     }
 
     do {
-      var call: ServerStreamingCall<ImageGenerationRequest, ImageGenerationResponse>? = nil
       guard let client = client.client else {
         logger.error("Worker \(id) task failed: invalid NIO client")
         throw WorkerError.invalidNioClient
       }
       let logger = logger
-      var numberOfImages = 0
       let taskExecuteStartTimestamp = Date()
       let workerId = id
-      let callInstance = client.generateImage(task.request) { response in
-        if !response.generatedImages.isEmpty {
-          numberOfImages += response.generatedImages.count
-        }
-        task.context.sendResponse(response).whenComplete { result in
-          switch result {
-          case .success:
-            logger.debug("forward response: \(response)")
-          case .failure(let error):
-            logger.error("Worker: \(workerId), forward response error \(error)")
-            call?.cancel(promise: nil)
-            task.promise.fail(error)
+      let callTask = Task {
+        try await client.generateImage(task.request) { response in
+          var numberOfImages = 0
+          for try await streamResponse in response.messages {
+            if !streamResponse.generatedImages.isEmpty {
+              numberOfImages += streamResponse.generatedImages.count
+            }
+            do {
+              try await task.context.sendResponse(streamResponse).get()
+              logger.debug("forward response: \(streamResponse)")
+            } catch {
+              logger.error("Worker: \(workerId), forward response error \(error)")
+              task.promise.fail(error)
+              throw error
+            }
           }
+          return numberOfImages
         }
       }
-
-      call = callInstance
       task.context.closeFuture.whenComplete { _ in
-        callInstance.cancel(promise: nil)
+        callTask.cancel()
       }
 
-      let status = try await callInstance.status.get()
+      let numberOfImages = try await callTask.value
+      let status = GRPCStatus(code: .ok, message: nil)
       if numberOfImages > 0 {
         let totalTimeMs = Date().timeIntervalSince(task.creationTimestamp) * 1000
         let totalExecutionTimeMs = Date().timeIntervalSince(taskExecuteStartTimestamp) * 1000

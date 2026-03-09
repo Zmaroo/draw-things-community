@@ -491,7 +491,6 @@ extension R2Client.ObjCResponder: URLSessionDataDelegate {
       downloadTask.completion(data, task.response, error)
       return
     }
-    let isTransientError: Bool
     let nsError = error as NSError
     if downloadTask.isTransient(nsError) {
       let resumeData = data

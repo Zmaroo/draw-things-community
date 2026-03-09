@@ -43,7 +43,13 @@ let package = Package(
     .package(url: "https://github.com/jagreenwood/swift-log-datadog.git", from: "0.3.0"),
 
     .package(url: "https://github.com/grpc/grpc-swift.git", from: "1.16.0"),
-    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.27.0"),
+    .package(
+      url: "https://github.com/grpc/grpc-swift-2.git",
+      revision: "703b1427ed221ac4d051d4aa611f6841fbae9ee8"),
+    .package(
+      url: "https://github.com/grpc/grpc-swift-nio-transport.git",
+      revision: "e706051d5579b5c6c45ecda1bcb72c0aedaa6683"),
+    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.20.2"),
     .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.3"),
     .package(url: "https://github.com/apple/swift-algorithms.git", from: "1.1.0"),
     .package(url: "https://github.com/apple/swift-numerics.git", from: "1.0.0"),
@@ -358,20 +364,36 @@ let package = Package(
       path: "Libraries/RemoteImageGenerator/Sources"
     ),
     .target(
+      name: "GRPCProtobuf",
+      dependencies: [
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+      ],
+      path: "Libraries/GRPC/Protobuf/Sources"
+    ),
+    .target(
       name: "GRPCImageServiceModels",
       dependencies: [
-        .product(name: "GRPC", package: "grpc-swift")
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        "GRPCProtobuf",
       ],
       path: "Libraries/GRPC/Models/Sources/imageService",
-      exclude: ["imageService.proto"]
+      exclude: ["imageService.proto"],
+      swiftSettings: [
+        .define("GRPC_SPM_PROTOMAP_SHIM")
+      ]
     ),
     .target(
       name: "GRPCControlPanelModels",
       dependencies: [
-        .product(name: "GRPC", package: "grpc-swift")
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        "GRPCProtobuf",
       ],
       path: "Libraries/GRPC/Models/Sources/controlPanel",
-      exclude: ["controlPanel.proto"]
+      exclude: ["controlPanel.proto"],
+      swiftSettings: [
+        .define("GRPC_SPM_PROTOMAP_SHIM")
+      ]
     ),
     .target(
       name: "ServerConfigurationRewriter",
@@ -382,9 +404,19 @@ let package = Package(
       path: "Libraries/GRPC/ServerConfigurationRewriter/Sources"
     ),
     .target(
+      name: "GRPCLegacyCompat",
+      dependencies: [
+        "GRPCImageServiceModels",
+        "GRPCControlPanelModels",
+        .product(name: "GRPC", package: "grpc-swift"),
+      ],
+      path: "Libraries/GRPC/LegacyCompat/Sources"
+    ),
+    .target(
       name: "GRPCServer",
       dependencies: [
         "GRPCImageServiceModels",
+        "GRPCLegacyCompat",
         "ServerConfigurationRewriter",
         "BinaryResources",
         "DataModels",
@@ -396,6 +428,8 @@ let package = Package(
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "Logging", package: "swift-log"),
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
         .product(name: "NNC", package: "s4nnc"),
       ],
       path: "Libraries/GRPC/Server/Sources",
@@ -421,6 +455,8 @@ let package = Package(
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "Logging", package: "swift-log"),
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
       ],
       path: "Libraries/GRPC/ProxyControlClient/Sources"
     ),

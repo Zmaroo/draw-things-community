@@ -16,3 +16,19 @@ swift_library(
         "@SwiftNIO//:NIOHTTP1",
     ],
 )
+
+swift_library(
+    name = "NIOCertificateReloading",
+    srcs = [
+        # grpc-swift-nio-transport only needs the CertificateReloader protocol surface.
+        # TimedCertificateReloader adds extra package dependencies not currently vendored.
+        "Sources/NIOCertificateReloading/CertificateReloader.swift",
+    ],
+    module_name = "NIOCertificateReloading",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@SwiftNIO//:NIOCore",
+        "@SwiftNIO//:NIOTLS",
+        "@SwiftNIOSSL//:NIOSSL",
+    ],
+)

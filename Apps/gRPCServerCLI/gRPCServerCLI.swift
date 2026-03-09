@@ -569,7 +569,18 @@ struct gRPCServerCLI: ParsableCommand {
     advertiser.startAdvertising(port: Int32(port), TLS: TLS)
 
     if let json = join {
-      try addServers(try AddServersConfiguration.parse(json))
+      let config = try AddServersConfiguration.parse(json)
+      if #available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *) {
+        try addServers(config)
+      } else {
+        throw NSError(
+          domain: "gRPCServerCLI",
+          code: 1,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "--join requires grpc-swift-2 runtime support (macOS 15.0+/iOS 18.0+)."
+          ])
+      }
     }
 
     // Block the current thread until the server closes
@@ -577,6 +588,7 @@ struct gRPCServerCLI: ParsableCommand {
     advertiser.stopAdvertising()
   }
 
+  @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
   func addServers(_ addServers: AddServersConfiguration) throws {
     guard !addServers.servers.isEmpty else {
       return

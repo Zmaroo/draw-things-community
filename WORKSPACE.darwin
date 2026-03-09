@@ -216,35 +216,35 @@ new_git_repository(
 new_git_repository(
     name = "SwiftNIO",
     build_file = "swift-nio.BUILD",
-    commit = "a16e2f54a25b2af217044e5168997009a505930f",
+    commit = "0f54d58bb5db9e064f332e8524150de379d1e51c",
     remote = "https://github.com/apple/swift-nio.git",
 )
 
 new_git_repository(
     name = "SwiftNIOExtras",
     build_file = "swift-nio-extras.BUILD",
-    commit = "b4dbfacff47fb8d0f9e0a422d8d37935a9f10570",
+    commit = "949cf2d3c895e3a576b0f5c5f902848ba17acbb9",
     remote = "https://github.com/apple/swift-nio-extras.git",
 )
 
 new_git_repository(
     name = "SwiftNIOHTTP2",
     build_file = "swift-nio-http2.BUILD",
-    commit = "6d021a48483dbb273a9be43f65234bdc9185b364",
+    commit = "5e9e99ec96c53bc2c18ddd10c1e25a3cd97c55e5",
     remote = "https://github.com/apple/swift-nio-http2.git",
 )
 
 new_git_repository(
     name = "SwiftNIOSSL",
     build_file = "swift-nio-ssl.BUILD",
-    commit = "9d0d5d8798a576fbf674a823734e65e15ca5f2ec",
+    commit = "737e550e607d82bf15bdfddf158ec61652ce836f",
     remote = "https://github.com/apple/swift-nio-ssl.git",
 )
 
 new_git_repository(
     name = "SwiftNIOTransportService",
     build_file = "swift-nio-transport-services.BUILD",
-    commit = "c0d9a144cfaec8d3d596aadde3039286a266c15c",
+    commit = "ebf8b9c365a6ce043bf6e6326a04b15589bd285e",
     remote = "https://github.com/apple/swift-nio-transport-services.git",
 )
 
@@ -269,6 +269,27 @@ new_git_repository(
     commit = "d6ad6fe561be74519144a6fbf381ad64f2cbf11b",
     remote = "https://github.com/grpc/grpc-swift-protobuf.git",
     shallow_since = "1740910916 +0000",
+)
+
+new_git_repository(
+    name = "grpc-swift-nio-transport",
+    build_file = "grpc-swift-nio-transport.BUILD",
+    commit = "e706051d5579b5c6c45ecda1bcb72c0aedaa6683",
+    remote = "https://github.com/grpc/grpc-swift-nio-transport.git",
+)
+
+new_git_repository(
+    name = "SwiftCertificates",
+    build_file = "swift-certificates.BUILD",
+    commit = "2ea3d05c75ba91104324ddd1b7307cfa78aeafc8",
+    remote = "https://github.com/apple/swift-certificates.git",
+)
+
+new_git_repository(
+    name = "SwiftASN1",
+    build_file = "swift-asn1.BUILD",
+    commit = "d1c97a8641c9c90360720b90506e395fca62aa07",
+    remote = "https://github.com/apple/swift-asn1.git",
 )
 
 new_git_repository(

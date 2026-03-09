@@ -72,6 +72,8 @@ swift_library(
         "@SwiftCrypto//:Crypto",
         "@SwiftCrypto//:CryptoBoringWrapper",
         "@SwiftLog//:Logging",
+        "@grpc-swift-2//:GRPCCore",
+        "@grpc-swift-nio-transport//:GRPCNIOTransportHTTP2",
         "@grpc-swift//:GRPC",
         "@s4nnc//nnc",
     ] + select({
@@ -107,7 +109,6 @@ swift_library(
     deps = [
         ":GRPCControlPanelModels",
         ":GRPCImageServiceModels",
-        ":GRPCLegacyCompat",
         "//Libraries/BinaryResources",
         "//Libraries/DataModels",
         "//Libraries/ModelZoo",
@@ -117,7 +118,8 @@ swift_library(
         "@SwiftCrypto//:Crypto",
         "@SwiftCrypto//:CryptoBoringWrapper",
         "@SwiftLog//:Logging",
-        "@grpc-swift//:GRPC",
+        "@grpc-swift-2//:GRPCCore",
+        "@grpc-swift-nio-transport//:GRPCNIOTransportHTTP2",
     ],
 )
 
@@ -141,6 +143,8 @@ swift_library(
         "@SwiftCrypto//:Crypto",
         "@SwiftCrypto//:CryptoBoringWrapper",
         "@SwiftLog//:Logging",
+        "@grpc-swift-2//:GRPCCore",
+        "@grpc-swift-nio-transport//:GRPCNIOTransportHTTP2",
         "@grpc-swift//:GRPC",
     ],
 )

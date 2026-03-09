@@ -1,14 +1,13 @@
 import Atomics
 import BinaryResources
 import Foundation
-import GRPC
+import GRPCCore
 import GRPCImageServiceModels
-import GRPCLegacyCompat
+import GRPCNIOTransportHTTP2
 import ModelZoo
 import NIO
-import NIOHTTP2
-import NIOSSL
 
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 public final class ImageGenerationClientWrapper {
   public final class MonitoringHandler: ChannelDuplexHandler {
     public struct Statistics {
@@ -56,10 +55,10 @@ public final class ImageGenerationClientWrapper {
     case invalidRootCA
   }
   private var deviceName: String? = nil
-  private var eventLoopGroup: EventLoopGroup? = nil
-  private var channel: GRPCChannel? = nil
+  private var grpcClient: GRPCClient<HTTP2ClientTransport.Posix>? = nil
+  private var runConnectionsTask: Task<Void, Never>? = nil
   public private(set) var sharedSecret: String? = nil
-  public private(set) var client: ImageGenerationServiceNIOClient? = nil
+  public private(set) var client: (any ImageGenerationService.ClientProtocol)? = nil
 
   public init(deviceName: String? = nil) {
     self.deviceName = deviceName
@@ -68,69 +67,62 @@ public final class ImageGenerationClientWrapper {
   public func connect(
     host: String, port: Int, TLS: Bool, hostnameVerification: Bool, sharedSecret: String?
   ) throws {
-    try? eventLoopGroup?.syncShutdownGracefully()
-    let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    let transportSecurity: GRPCChannelPool.Configuration.TransportSecurity
+    grpcClient?.beginGracefulShutdown()
+    runConnectionsTask?.cancel()
+
+    let transportSecurity: HTTP2ClientTransport.Posix.TransportSecurity
     if TLS {
-      let bytes = [UInt8](BinaryResources.root_ca_crt)
-      guard bytes.count > 0 else {
+      let rootCABytes = [UInt8](BinaryResources.root_ca_crt)
+      guard rootCABytes.count > 0 else {
         throw ImageGenerationClientWrapper.Error.invalidRootCA
       }
-      let certificate = try NIOSSLCertificate(bytes: bytes, format: .pem)
-
-      let isrgrootx1 = {
-        let bytes = [UInt8](BinaryResources.isrgrootx1_pem)
-        return try? NIOSSLCertificate(bytes: bytes, format: .pem)
-      }()
+      let isrgRootBytes = [UInt8](BinaryResources.isrgrootx1_pem)
 
       transportSecurity = .tls(
-        .makeClientConfigurationBackedByNIOSSL(
-          trustRoots: .certificates([certificate] + (isrgrootx1.map { [$0] } ?? [])),
-          certificateVerification: hostnameVerification
-            ? .fullVerification : .noHostnameVerification
-        ))
+        .defaults {
+          var certificates: [TLSConfig.CertificateSource] = [
+            .bytes(rootCABytes, format: .pem)
+          ]
+          if !isrgRootBytes.isEmpty {
+            certificates.append(.bytes(isrgRootBytes, format: .pem))
+          }
+          $0.trustRoots = .certificates(certificates)
+          $0.serverCertificateVerification =
+            hostnameVerification ? .fullVerification : .noHostnameVerification
+        })
     } else {
       transportSecurity = .plaintext
     }
-    var configuration = GRPCChannelPool.Configuration.with(
-      target: .host(host, port: port),
-      transportSecurity: transportSecurity,
-      eventLoopGroup: eventLoopGroup)
-    configuration.debugChannelInitializer = { channel in
-      channel.eventLoop.makeCompletedFuture {
-        let sync = channel.pipeline.syncOperations
-        let http2Handler = try sync.handler(type: NIOHTTP2Handler.self)
-        // Note: this closure is called for every new connection, so you should
-        // emit any events to a shared `Sendable` object held by the `ByteRecordingHandler`.
-        // That object will be the bridge between the connection and your application.
-        let monitoringHandler = MonitoringHandler()
-        try sync.addHandler(monitoringHandler, position: .before(http2Handler))
+    let transport = try HTTP2ClientTransport.Posix(
+      target: .dns(host: host, port: port),
+      transportSecurity: transportSecurity
+    )
+    let grpcClient = GRPCClient(transport: transport)
+    let client = ImageGenerationService.Client(wrapping: grpcClient)
+    self.grpcClient = grpcClient
+    self.client = client
+    self.runConnectionsTask = Task {
+      do {
+        try await grpcClient.runConnections()
+      } catch {
+        print("image generation client connection loop failed: \(error)")
       }
     }
-    configuration.maximumReceiveMessageLength = 1024 * 1024 * 1024
-    let channel = try GRPCChannelPool.with(configuration: configuration)
-    let client = ImageGenerationServiceNIOClient(channel: channel)
-    self.eventLoopGroup = eventLoopGroup
-    self.channel = channel
-    self.client = client
     self.sharedSecret = sharedSecret
   }
 
   public func disconnect() throws {
-    try channel?.close().wait()
-    try eventLoopGroup?.syncShutdownGracefully()
+    grpcClient?.beginGracefulShutdown()
+    runConnectionsTask?.cancel()
+    runConnectionsTask = nil
+    grpcClient = nil
     client = nil
-    channel = nil
-    eventLoopGroup = nil
     sharedSecret = nil
   }
 
   deinit {
-    guard let eventLoopGroup = eventLoopGroup else { return }
-    // Do async shutdown in deinit, make sure we don't hold any of self reference.
-    let _ = channel?.close().always { _ in
-      eventLoopGroup.shutdownGracefully { _ in }
-    }
+    grpcClient?.beginGracefulShutdown()
+    runConnectionsTask?.cancel()
   }
 
   public struct LabHours {
@@ -149,14 +141,10 @@ public final class ImageGenerationClientWrapper {
       callback(nil)
       return
     }
-    let request = HoursRequest.with { _ in }
-
-    let callOptions = CallOptions(
-      messageEncoding: .enabled(.responsesOnly(decompressionLimit: .ratio(100))))
-
-    let _ = client.hours(request, callOptions: callOptions).response.always {
-      switch $0 {
-      case .success(let result):
+    let request = HoursRequest()
+    Task {
+      do {
+        let result = try await client.hours(request)
         if result.hasThresholds {
           let thresholds = result.thresholds
           callback(
@@ -166,7 +154,7 @@ public final class ImageGenerationClientWrapper {
         } else {
           callback(nil)
         }
-      case .failure(_):
+      } catch {
         callback(nil)
       }
     }
@@ -190,19 +178,15 @@ public final class ImageGenerationClientWrapper {
       return
     }
 
-    let request = EchoRequest.with {
-      $0.name = deviceName ?? ""
-      if let sharedSecret = sharedSecret {
-        $0.sharedSecret = sharedSecret
-      }
+    var request = EchoRequest()
+    request.name = deviceName ?? ""
+    if let sharedSecret = sharedSecret {
+      request.sharedSecret = sharedSecret
     }
 
-    let callOptions = CallOptions(
-      messageEncoding: .enabled(.responsesOnly(decompressionLimit: .ratio(100))))
-
-    let _ = client.echo(request, callOptions: callOptions).response.always {
-      switch $0 {
-      case .success(let result):
+    Task {
+      do {
+        let result = try await client.echo(request)
         let jsonDecoder = JSONDecoder()
         jsonDecoder.keyDecodingStrategy = .convertFromSnakeCase
         let models =
@@ -234,7 +218,7 @@ public final class ImageGenerationClientWrapper {
             files: result.files, models: models, LoRAs: loras, controlNets: controlNets,
             textualInversions: textualInversions
           ), labHours, result.serverIdentifier)
-      case .failure(_):
+      } catch {
         callback(
           false, false, (files: [], models: [], LoRAs: [], controlNets: [], textualInversions: []),
           nil, 0)
@@ -242,36 +226,35 @@ public final class ImageGenerationClientWrapper {
     }
   }
 
-  public typealias FileExistsCall = UnaryCall<FileListRequest, FileExistenceResponse>
+  public typealias FileExistsCall = Task<Void, Never>
 
   public func filesExists(
     files: [String], filesToMatch: [String],
     callback: @escaping (Bool, [(String, Bool, Data)]) -> Void
-  ) -> UnaryCall<FileListRequest, FileExistenceResponse>? {
+  ) -> Task<Void, Never>? {
     guard let client = client else {
       callback(false, [])
       return nil
     }
 
-    let request = FileListRequest.with {
-      $0.files = files
-      $0.filesWithHash = filesToMatch
-      if let sharedSecret = sharedSecret {
-        $0.sharedSecret = sharedSecret
-      }
+    var request = FileListRequest()
+    request.files = files
+    request.filesWithHash = filesToMatch
+    if let sharedSecret = sharedSecret {
+      request.sharedSecret = sharedSecret
     }
-    let call = client.filesExist(request)
-    let _ = call.response.always { result in
-      switch result {
-      case .success(let response):
-        let payload = zip(response.files, response.existences).enumerated().map {
-          ($1.0, $1.1, $0 < response.hashes.count ? response.hashes[$0] : Data())
+
+    let task = Task {
+      do {
+        let response = try await client.filesExist(request)
+        let payload = zip(response.files, response.existences).enumerated().map { index, item in
+          (item.0, item.1, index < response.hashes.count ? response.hashes[index] : Data())
         }
         callback(true, payload)
-      case .failure(_):
+      } catch {
         callback(false, [])
       }
     }
-    return call
+    return task
   }
 }

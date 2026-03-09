@@ -61,10 +61,6 @@ swift_library(
             "Sources/CryptoBoringWrapper/PrivacyInfo.xcprivacy",
         ],
     ),
-    defines = [
-        "CRYPTO_IN_SWIFTPM",
-        "CRYPTO_IN_SWIFTPM_FORCE_BUILD_API",
-    ],
     module_name = "CryptoBoringWrapper",
     visibility = ["//visibility:public"],
     deps = [
@@ -88,8 +84,13 @@ swift_library(
             "Sources/Crypto/PrivacyInfo.xcprivacy",
         ],
     ),
+    copts = [
+        "-DMODULE_IS_CRYPTO",
+        "-Xcc",
+        "-DMODULE_IS_CRYPTO",
+    ],
     defines = [
-        "MODULE_IS_CRYPTO",
+        "CRYPTO_IN_SWIFTPM",
     ],
     module_name = "Crypto",
     visibility = ["//visibility:public"],
@@ -112,7 +113,7 @@ swift_library(
         ],
     ),
     defines = [
-        "MODULE_IS_CRYPTO",
+        "CRYPTO_IN_SWIFTPM",
     ],
     module_name = "_CryptoExtras",
     visibility = ["//visibility:public"],
