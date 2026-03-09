@@ -416,7 +416,6 @@ let package = Package(
       name: "GRPCServer",
       dependencies: [
         "GRPCImageServiceModels",
-        "GRPCLegacyCompat",
         "ServerConfigurationRewriter",
         "BinaryResources",
         "DataModels",
@@ -488,7 +487,8 @@ let package = Package(
         "Diffusion",
         "Utils",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
-        .product(name: "GRPC", package: "grpc-swift"),
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
         .product(name: "DataDogLog", package: "swift-log-datadog"),
       ],
       path: "Apps/gRPCServerCLI",

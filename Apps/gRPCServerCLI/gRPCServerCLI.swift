@@ -5,16 +5,15 @@ import DataModels
 import Dflat
 import Diffusion
 import Foundation
-import GRPC
 import GRPCControlPanelModels
+import GRPCCore
 import GRPCImageServiceModels
+import GRPCNIOTransportHTTP2
 import GRPCServer
 import ImageGenerator
 import LocalImageGenerator
 import Logging
 import ModelZoo
-import NIO
-import NIOSSL
 import NNC
 import ProxyControlClient
 import SQLiteDflat
@@ -488,20 +487,26 @@ struct gRPCServerCLI: ParsableCommand {
       DeviceCapability.isFreadPreferred = true  // This will not do mmap but use fread when needed.
     }
     DeviceCapability.maxTotalWeightsCacheSize = UInt64(weightsCache) * 1_024 * 1_024 * 1_024
-    try self.runAndBlock(
-      name: name, address: address, port: port, TLS: !noTLS,
-      serverLoRALoader: serverLoRALoader)
+    if #available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *) {
+      try self.runAndBlock(
+        name: name, address: address, port: port, TLS: !noTLS,
+        serverLoRALoader: serverLoRALoader)
+    } else {
+      throw NSError(
+        domain: "gRPCServerCLI",
+        code: 1,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "grpc-swift-2 server runtime requires macOS 15.0+/iOS 18.0+."
+        ])
+    }
   }
 
+  @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
   func runAndBlock(
     name: String, address: String, port: Int, TLS: Bool,
     serverLoRALoader: ServerLoRALoader?
   ) throws {
-
-    let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    defer {
-      try! group.syncShutdownGracefully()
-    }
     let queue = DispatchQueue(label: "com.draw-things.edit", qos: .userInteractive)
     let (tempDir, localImageGenerator) = createLocalImageGenerator(queue: queue)
     if let cacheUri = cacheUri {
@@ -534,58 +539,81 @@ struct gRPCServerCLI: ParsableCommand {
     }
     imageGenerationServiceImpl.sharedSecret = sharedSecret.isEmpty ? nil : sharedSecret
 
-    // Bind the server and get an `EventLoopFuture<Server>`
-    let serverFuture: EventLoopFuture<GRPC.Server>
-    let certificate = try? NIOSSLCertificate(
-      bytes: [UInt8](BinaryResources.server_crt_crt), format: .pem)
-    let privateKey = try? NIOSSLPrivateKey(
-      bytes: [UInt8](BinaryResources.server_key_key), format: .pem)
-    var TLS = TLS
-    if TLS, let certificate = certificate, let privateKey = privateKey {
-      serverFuture = GRPC.Server.usingTLS(
-        with: GRPCTLSConfiguration.makeServerConfigurationBackedByNIOSSL(
-          certificateChain: [.certificate(certificate)], privateKey: .privateKey(privateKey)),
-        on: group
-      )
-      .withServiceProviders([imageGenerationServiceImpl])
-      .withMaximumReceiveMessageLength(1024 * 1024 * 1024)
-      .bind(host: address, port: port)
+    var transportConfig = HTTP2ServerTransport.Posix.Config.defaults
+    transportConfig.rpc.maxRequestPayloadSize = 1024 * 1024 * 1024
+
+    var tlsEnabled = TLS
+    let transportSecurity: HTTP2ServerTransport.Posix.TransportSecurity
+    if TLS {
+      let certBytes = [UInt8](BinaryResources.server_crt_crt)
+      let keyBytes = [UInt8](BinaryResources.server_key_key)
+      if certBytes.isEmpty || keyBytes.isEmpty {
+        tlsEnabled = false
+        transportSecurity = .plaintext
+      } else {
+        transportSecurity = .tls(
+          certificateChain: [.bytes(certBytes, format: .pem)],
+          privateKey: .bytes(keyBytes, format: .pem)
+        )
+      }
     } else {
-      serverFuture = GRPC.Server.insecure(group: group)
-        .withServiceProviders([imageGenerationServiceImpl])
-        .withMaximumReceiveMessageLength(1024 * 1024 * 1024)
-        .bind(host: address, port: port)
-      TLS = false
+      transportSecurity = .plaintext
     }
 
-    let server: Server = try serverFuture.wait()
+    let transport = HTTP2ServerTransport.Posix(
+      address: .ipv4(host: address, port: port),
+      transportSecurity: transportSecurity,
+      config: transportConfig
+    )
+    let server = GRPCServer(transport: transport, services: [imageGenerationServiceImpl])
+    let serverTask = Task {
+      try await server.serve()
+    }
 
-    if let localAddress = server.channel.localAddress, let port = localAddress.port {
-      print("Server started on local address: \(localAddress), port \(port)")
+    func waitForAsync<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) throws
+      -> T
+    {
+      let semaphore = DispatchSemaphore(value: 0)
+      let resultQueue = DispatchQueue(label: "gRPCServerCLI.waitForAsync.result")
+      var result: Result<T, any Error>?
+      Task {
+        do {
+          let value = try await operation()
+          resultQueue.sync {
+            result = .success(value)
+          }
+        } catch {
+          resultQueue.sync {
+            result = .failure(error)
+          }
+        }
+        semaphore.signal()
+      }
+      semaphore.wait()
+      return try resultQueue.sync {
+        try result!.get()
+      }
+    }
+
+    if let localAddress = try waitForAsync({ try await server.listeningAddress }) {
+      print("Server started on local address: \(localAddress)")
     } else {
       print("Server started, but port is unknown")
     }
     let advertiser: GRPCServerAdvertiser = GRPCServerAdvertiser(name: name)
-    advertiser.startAdvertising(port: Int32(port), TLS: TLS)
+    advertiser.startAdvertising(port: Int32(port), TLS: tlsEnabled)
+    defer {
+      server.beginGracefulShutdown()
+      advertiser.stopAdvertising()
+    }
 
     if let json = join {
       let config = try AddServersConfiguration.parse(json)
-      if #available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *) {
-        try addServers(config)
-      } else {
-        throw NSError(
-          domain: "gRPCServerCLI",
-          code: 1,
-          userInfo: [
-            NSLocalizedDescriptionKey:
-              "--join requires grpc-swift-2 runtime support (macOS 15.0+/iOS 18.0+)."
-          ])
-      }
+      try addServers(config)
     }
 
-    // Block the current thread until the server closes
-    try server.onClose.wait()
-    advertiser.stopAdvertising()
+    // Block until the server shuts down.
+    _ = try waitForAsync { try await serverTask.value }
   }
 
   @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)

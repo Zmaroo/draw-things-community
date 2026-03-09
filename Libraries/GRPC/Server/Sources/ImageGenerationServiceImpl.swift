@@ -3,13 +3,11 @@ import Crypto
 import DataModels
 import Diffusion
 import Foundation
-import GRPC
+import GRPCCore
 import GRPCImageServiceModels
-import GRPCLegacyCompat
 import ImageGenerator
 import Logging
 import ModelZoo
-import NIOCore
 import NNC
 import ScriptDataModels
 import ServerConfigurationRewriter
@@ -99,11 +97,10 @@ public protocol ImageGenerationServiceDelegate: AnyObject {
   func didCompleteGenerationResponse(success: Bool)
 }
 
-public enum ImageGenerationServiceError: Error {
-  case sharedSecret
-}
-
-public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+public final class ImageGenerationServiceImpl: @unchecked Sendable,
+  ImageGenerationService.SimpleServiceProtocol
+{
   private let queue: DispatchQueue
   private let backupQueue: DispatchQueue
   private let imageGeneratorLock: DispatchQueue
@@ -115,7 +112,6 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
   private let serverConfigurationRewriter: ServerConfigurationRewriter?
   public let serverIdentifier: UInt64
   public weak var delegate: ImageGenerationServiceDelegate? = nil
-  public var interceptors: ImageGenerationServiceServerInterceptorFactoryProtocol? = nil
   private let logger = Logger(label: "com.draw-things.image-generation-service")
   public let usesBackupQueue = ManagedAtomic<Bool>(false)
   public let bridgeMode = ManagedAtomic<Bool>(false)
@@ -149,6 +145,34 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     imageGeneratorLock = DispatchQueue(label: "ImageGenerationServiceImpl.imageGeneratorLock")
     serverIdentifier = UInt64.random(in: UInt64.min...UInt64.max)
     logger.info("ImageGenerationServiceImpl init")
+  }
+
+  private func rpcError(code: RPCError.Code, message: String, cause: (any Error)? = nil)
+    -> RPCError
+  {
+    RPCError(code: code, message: message, cause: cause)
+  }
+
+  private func writeResponseSynchronously(
+    _ value: ImageGenerationResponse, to writer: RPCWriter<ImageGenerationResponse>
+  ) throws {
+    let semaphore = DispatchSemaphore(value: 0)
+    let resultQueue = DispatchQueue(label: "ImageGenerationServiceImpl.writeResponse.result")
+    var writeError: (any Error)?
+    Task {
+      do {
+        try await writer.write(value)
+      } catch {
+        resultQueue.sync {
+          writeError = error
+        }
+      }
+      semaphore.signal()
+    }
+    semaphore.wait()
+    if let writeError = resultQueue.sync(execute: { writeError }) {
+      throw writeError
+    }
   }
 
   private func requestedImageResponseFormat(from responseFormat: ResponseFormat)
@@ -245,12 +269,13 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     configuration: GenerationConfiguration, modelOverrides: [ModelZoo.Specification]
   ) throws {
     guard configuration.steps > 0 else {
-      throw GRPCStatus(
+      throw rpcError(
         code: .invalidArgument, message: "Invalid configuration: steps must be > 0")
     }
     guard configuration.startWidth > 0, configuration.startHeight > 0 else {
-      throw GRPCStatus(
-        code: .invalidArgument, message: "Invalid dimensions: startWidth/startHeight must be > 0")
+      throw rpcError(
+        code: .invalidArgument,
+        message: "Invalid dimensions: startWidth/startHeight must be > 0")
     }
     if let model = configuration.model, !model.isEmpty {
       let hasModelMapping =
@@ -258,7 +283,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
         || ModelZoo.specificationForHumanReadableModel(model) != nil
         || modelOverrides.contains(where: { $0.file == model || $0.name == model })
       guard hasModelMapping else {
-        throw GRPCStatus(
+        throw rpcError(
           code: .invalidArgument, message: "Invalid configuration: missing model map for \(model)")
       }
     }
@@ -287,191 +312,171 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
     }
   }
 
-  // Implement the async generateImage method
   public func generateImage(
     request: ImageGenerationRequest,
-    context: StreamingResponseCallContext<ImageGenerationResponse>
-  ) -> EventLoopFuture<GRPCStatus> {
+    response: RPCWriter<ImageGenerationResponse>,
+    context: ServerContext
+  ) async throws {
     let requestID = UUID().uuidString
-    // Log the incoming request
     logger.info("Received image processing request, begin. request_id=\(requestID)")
-    let eventLoop = context.eventLoop
-    if let sharedSecret = sharedSecret, !sharedSecret.isEmpty {
-      guard request.sharedSecret == sharedSecret else {
-        return eventLoop.makeFailedFuture(ImageGenerationServiceError.sharedSecret)
-      }
+
+    if let sharedSecret = sharedSecret, !sharedSecret.isEmpty, request.sharedSecret != sharedSecret
+    {
+      throw rpcError(code: .unauthenticated, message: "Shared secret mismatch.")
     }
-    let promise = eventLoop.makePromise(of: GRPCStatus.self)
-    let usesBackupQueue = usesBackupQueue.load(ordering: .acquiring)
+
     let responseCompression = responseCompression.load(ordering: .acquiring)
-    let queue = usesBackupQueue ? backupQueue : queue
+    let runQueue = usesBackupQueue.load(ordering: .acquiring) ? backupQueue : queue
     let configuration = GenerationConfiguration.from(data: request.configuration)
-    if let serverConfigurationRewriter = serverConfigurationRewriter {
-      let cancelFlag = ManagedAtomic<Bool>(false)
-      let successFlag = ManagedAtomic<Bool>(false)
-      let terminalEmitted = ManagedAtomic<Bool>(false)
-      var cancellation: ProtectedValue<(() -> Void)?> = ProtectedValue(nil)
-      let logger = logger
-      let cancellationMonitor = cancellationMonitor
-      func emitTerminalEvent(_ status: String) {
-        let once = terminalEmitted.compareExchange(
-          expected: false, desired: true, ordering: .acquiringAndReleasing)
-        guard once.exchanged else { return }
-        let response = ImageGenerationResponse.with {
-          $0.tags =
-            Self.grpcTraceTags(
-              requestID: requestID,
-              eventType: "terminal",
-              isTerminal: true
-            ) + ["terminal_status=\(status)"]
-        }
-        context.sendResponse(response, promise: nil)
-      }
-      func cancel() {
-        cancelFlag.store(true, ordering: .releasing)
-        cancellation.modify {
-          $0?()
-          $0 = nil
-        }
-        emitTerminalEvent("cancelled")
-        if let cancellationMonitor = cancellationMonitor {
-          Self.cancellationMonitoring(
-            successFlag: successFlag, logger: logger, cancellationMonitor: cancellationMonitor)
-        }
-      }
-      context.closeFuture.whenComplete { _ in
-        cancel()
-      }
-      serverConfigurationRewriter.newConfiguration(configuration: configuration) {
-        bytesReceived, bytesExpected, index, total in
-        let response = ImageGenerationResponse.with {
-          $0.remoteDownload = RemoteDownloadResponse.with {
-            $0.bytesExpected = bytesExpected
-            $0.bytesReceived = bytesReceived
-            $0.item = Int32(index)
-            $0.itemsExpected = Int32(total)
-          }
-          $0.tags = Self.grpcTraceTags(
-            requestID: requestID,
-            eventType: "remote_download",
-            isTerminal: false
-          )
-        }
-        context.sendResponse(response, promise: nil)
-      } cancellation: {
-        cancellationBlock in
-        cancellation.modify {
-          $0 = cancellationBlock
-        }
-      } completion: {
-        [weak self] result in
-        guard let self = self else { return }
-        cancellation.modify {
-          $0 = nil
-        }
-        switch result {
-        case .success(let newConfiguration):
-          queue.async { [weak self] in
-            guard let self = self else { return }
-            self.generateImage(
-              configuration: newConfiguration, request: request, promise: promise, context: context,
-              responseCompression: responseCompression, cancelFlag: cancelFlag,
-              successFlag: successFlag,
-              cancellation: &cancellation, cancel: cancel, requestID: requestID,
-              emitTerminalEvent: emitTerminalEvent
-            )
-          }
-        case .failure(let error):
-          emitTerminalEvent("failed")
-          promise.fail(error)
-          context.statusPromise.fail(error)
-          if let delegate = self.delegate {
-            DispatchQueue.main.async {
-              delegate.didCompleteGenerationResponse(success: false)
-            }
-          }
+
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      runQueue.async { [weak self] in
+        guard let self = self else {
+          continuation.resume(
+            throwing: RPCError(
+              code: .internalError, message: "ImageGenerationServiceImpl deallocated."))
           return
         }
-      }
-    } else {
-      queue.async { [weak self] in
-        guard let self = self else { return }
-        let terminalEmitted = ManagedAtomic<Bool>(false)
-        func emitTerminalEvent(_ status: String) {
-          let once = terminalEmitted.compareExchange(
-            expected: false, desired: true, ordering: .acquiringAndReleasing)
-          guard once.exchanged else { return }
-          let response = ImageGenerationResponse.with {
-            $0.tags =
-              Self.grpcTraceTags(
-                requestID: requestID,
-                eventType: "terminal",
-                isTerminal: true
-              ) + ["terminal_status=\(status)"]
+
+        do {
+          if let serverConfigurationRewriter = self.serverConfigurationRewriter {
+            var cancellation: ProtectedValue<(() -> Void)?> = ProtectedValue(nil)
+            var rewriteResult: Result<GenerationConfiguration, any Error>?
+            let rewriteWait = DispatchSemaphore(value: 0)
+
+            serverConfigurationRewriter.newConfiguration(configuration: configuration) {
+              bytesReceived, bytesExpected, index, total in
+              let update = ImageGenerationResponse.with {
+                $0.remoteDownload = RemoteDownloadResponse.with {
+                  $0.bytesExpected = bytesExpected
+                  $0.bytesReceived = bytesReceived
+                  $0.item = Int32(index)
+                  $0.itemsExpected = Int32(total)
+                }
+                $0.tags = Self.grpcTraceTags(
+                  requestID: requestID,
+                  eventType: "remote_download",
+                  isTerminal: false
+                )
+              }
+              try? self.writeResponseSynchronously(update, to: response)
+            } cancellation: { cancellationBlock in
+              cancellation.modify { $0 = cancellationBlock }
+            } completion: { result in
+              rewriteResult = result
+              rewriteWait.signal()
+            }
+
+            rewriteWait.wait()
+            cancellation.modify { $0 = nil }
+            let rewrittenConfiguration = try rewriteResult!.get()
+
+            try self.generateImage(
+              configuration: rewrittenConfiguration,
+              request: request,
+              response: response,
+              responseCompression: responseCompression,
+              context: context,
+              requestID: requestID
+            )
+          } else {
+            try self.generateImage(
+              configuration: configuration,
+              request: request,
+              response: response,
+              responseCompression: responseCompression,
+              context: context,
+              requestID: requestID
+            )
           }
-          context.sendResponse(response, promise: nil)
+
+          continuation.resume()
+        } catch {
+          continuation.resume(throwing: error)
         }
-        self.generateImage(
-          configuration: configuration, request: request, promise: promise, context: context,
-          responseCompression: responseCompression, requestID: requestID,
-          emitTerminalEvent: emitTerminalEvent
-        )
       }
     }
-    return promise.futureResult
   }
 
   private func generateImage(
     configuration: GenerationConfiguration,
     request: ImageGenerationRequest,
-    promise: EventLoopPromise<GRPCStatus>,
-    context: StreamingResponseCallContext<ImageGenerationResponse>,
+    response: RPCWriter<ImageGenerationResponse>,
     responseCompression: Bool,
-    requestID: String,
-    emitTerminalEvent: @escaping (String) -> Void
-  ) {
+    context: ServerContext,
+    requestID: String
+  ) throws {
     let cancelFlag = ManagedAtomic<Bool>(false)
     let successFlag = ManagedAtomic<Bool>(false)
     var cancellation: ProtectedValue<(() -> Void)?> = ProtectedValue(nil)
     let logger = logger
     let cancellationMonitor = cancellationMonitor
+    let terminalEmitted = ManagedAtomic<Bool>(false)
+
+    func emitTerminalEvent(_ status: String) {
+      let once = terminalEmitted.compareExchange(
+        expected: false, desired: true, ordering: .acquiringAndReleasing)
+      guard once.exchanged else { return }
+      let terminal = ImageGenerationResponse.with {
+        $0.tags =
+          Self.grpcTraceTags(
+            requestID: requestID,
+            eventType: "terminal",
+            isTerminal: true
+          ) + ["terminal_status=\(status)"]
+      }
+      try? writeResponseSynchronously(terminal, to: response)
+    }
+
     func cancel() {
       cancelFlag.store(true, ordering: .releasing)
       cancellation.modify {
         $0?()
         $0 = nil
       }
-      // Start monitoring after cancellation
+      emitTerminalEvent("cancelled")
       if let cancellationMonitor = cancellationMonitor {
         Self.cancellationMonitoring(
           successFlag: successFlag, logger: logger, cancellationMonitor: cancellationMonitor)
       }
     }
-    context.closeFuture.whenComplete { _ in
+
+    if context.cancellation.isCancelled {
       cancel()
     }
-    generateImage(
-      configuration: configuration, request: request, promise: promise, context: context,
-      responseCompression: responseCompression, cancelFlag: cancelFlag, successFlag: successFlag,
+
+    try generateImage(
+      configuration: configuration,
+      request: request,
+      response: response,
+      responseCompression: responseCompression,
+      cancelFlag: cancelFlag,
+      successFlag: successFlag,
       cancellation: &cancellation,
-      cancel: cancel, requestID: requestID,
-      emitTerminalEvent: emitTerminalEvent)
+      cancel: cancel,
+      requestID: requestID,
+      emitTerminalEvent: emitTerminalEvent,
+      context: context
+    )
   }
 
   private func generateImage(
     configuration: GenerationConfiguration,
     request: ImageGenerationRequest,
-    promise: EventLoopPromise<GRPCStatus>,
-    context: StreamingResponseCallContext<ImageGenerationResponse>,
+    response: RPCWriter<ImageGenerationResponse>,
     responseCompression: Bool,
     cancelFlag: ManagedAtomic<Bool>,
     successFlag: ManagedAtomic<Bool>,
     cancellation: inout ProtectedValue<(() -> Void)?>,
     cancel: @escaping () -> Void,
     requestID: String,
-    emitTerminalEvent: @escaping (String) -> Void
-  ) {
+    emitTerminalEvent: @escaping (String) -> Void,
+    context: ServerContext
+  ) throws {
     func isCancelled() -> Bool {
+      if context.cancellation.isCancelled {
+        cancel()
+      }
       return cancelFlag.load(ordering: .acquiring)
     }
     logger.info(
@@ -488,9 +493,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       try validateGenerationRequest(configuration: configuration, modelOverrides: models)
     } catch {
       emitTerminalEvent("failed")
-      promise.fail(error)
-      context.statusPromise.fail(error)
-      return
+      throw error
     }
     let loras =
       (try? jsonDecoder.decode(
@@ -573,7 +576,13 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
           }
         }
 
-        context.sendResponse(update, promise: nil)
+        do {
+          try self.writeResponseSynchronously(update, to: response)
+        } catch {
+          self.logger.error("Failed to write progress update: \(error)")
+          cancel()
+          return false
+        }
         if let delegate = self.delegate {
           DispatchQueue.main.async {
             delegate.didUpdateGenerationProgress(signpost: signpost, signposts: signposts)
@@ -683,7 +692,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
             isTerminal: false
           )
         }
-        context.sendResponse(projectionResponse, promise: nil)
+        try writeResponseSynchronously(projectionResponse, to: response)
       }
       if imageDatas.isEmpty {
         let finalResponse = ImageGenerationResponse.with {
@@ -710,7 +719,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
             isTerminal: false
           )
         }
-        context.sendResponse(finalResponse, promise: nil)
+        try writeResponseSynchronously(finalResponse, to: response)
       } else {
         let chunked = chunked && totalBytes > 4 * 1024 * 1024  // If total bytes is less than 4MiB, send them in one batch. Otherwise, chunk them up.
         logger.info("Image processed successfully, should send in chunks? \(chunked)")
@@ -733,7 +742,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
                   isTerminal: false
                 )
               }
-              context.sendResponse(finalResponse, promise: nil)
+              try writeResponseSynchronously(finalResponse, to: response)
             }
           }
         } else {
@@ -752,7 +761,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
                 isTerminal: false
               )
             }
-            context.sendResponse(finalResponse, promise: nil)
+            try writeResponseSynchronously(finalResponse, to: response)
           }
         }
       }
@@ -774,7 +783,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
                   isTerminal: false
                 )
               }
-              context.sendResponse(finalResponse, promise: nil)
+              try writeResponseSynchronously(finalResponse, to: response)
             } else {
               for j in stride(from: 0, to: dataSize, by: 4 * 1024 * 1024) {
                 let chunkSize = min(4 * 1024 * 1024, dataSize - j)
@@ -794,7 +803,7 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
                     isTerminal: false
                   )
                 }
-                context.sendResponse(finalResponse, promise: nil)
+                try writeResponseSynchronously(finalResponse, to: response)
               }
             }
           }
@@ -811,12 +820,10 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
                 isTerminal: false
               )
             }
-            context.sendResponse(finalResponse, promise: nil)
+            try writeResponseSynchronously(finalResponse, to: response)
           }
         }
       }
-      promise.succeed(.ok)
-      context.statusPromise.succeed(.ok)
       let success = imageDatas.isEmpty ? false : true
       emitTerminalEvent(success ? "completed" : (isCancelled() ? "cancelled" : "failed"))
       if let delegate = delegate {
@@ -826,23 +833,22 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       }
     } catch (let error) {
       emitTerminalEvent(isCancelled() ? "cancelled" : "failed")
-      promise.fail(error)
-      context.statusPromise.fail(error)
       if let delegate = delegate {
         DispatchQueue.main.async {
           delegate.didCompleteGenerationResponse(success: false)
         }
       }
+      throw error
     }
   }
 
-  public func filesExist(request: FileListRequest, context: any StatusOnlyCallContext)
-    -> EventLoopFuture<FileExistenceResponse>
+  public func filesExist(request: FileListRequest, context: ServerContext) async throws
+    -> FileExistenceResponse
   {
     logger.info("Received request for files exist: \(request.files)")
     if let sharedSecret = sharedSecret, !sharedSecret.isEmpty {
       guard request.sharedSecret == sharedSecret else {
-        return context.eventLoop.makeFailedFuture(ImageGenerationServiceError.sharedSecret)
+        throw rpcError(code: .unauthenticated, message: "Shared secret mismatch.")
       }
     }
     var files = [String]()
@@ -872,27 +878,20 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       $0.existences = existences
       $0.hashes = hashes
     }
-    return context.eventLoop.makeSucceededFuture(response)
+    return response
   }
 
-  public func pubkey(request: PubkeyRequest, context: StatusOnlyCallContext)
-    -> EventLoopFuture<PubkeyResponse>
+  public func pubkey(request: PubkeyRequest, context: ServerContext) async throws -> PubkeyResponse
   {
-    let response = PubkeyResponse.with { _ in }
-    return context.eventLoop.makeSucceededFuture(response)
+    PubkeyResponse.with { _ in }
   }
 
-  public func hours(request: HoursRequest, context: any StatusOnlyCallContext) -> EventLoopFuture<
-    HoursResponse
-  > {
-    let response = HoursResponse.with { _ in }
-    return context.eventLoop.makeSucceededFuture(response)
+  public func hours(request: HoursRequest, context: ServerContext) async throws -> HoursResponse {
+    HoursResponse.with { _ in }
   }
 
-  public func echo(
-    request: GRPCImageServiceModels.EchoRequest, context: any GRPC.StatusOnlyCallContext
-  )
-    -> NIOCore.EventLoopFuture<GRPCImageServiceModels.EchoReply>
+  public func echo(request: GRPCImageServiceModels.EchoRequest, context: ServerContext)
+    async throws -> GRPCImageServiceModels.EchoReply
   {
     let enableModelBrowsing = enableModelBrowsing.load(ordering: .acquiring)
     let response = EchoReply.with {
@@ -962,160 +961,131 @@ public final class ImageGenerationServiceImpl: ImageGenerationServiceProvider {
       }
     }
     if echoOnQueue {
-      let promise = context.eventLoop.makePromise(of: EchoReply.self)
-      queue.async {
-        promise.succeed(response)
+      return try await withCheckedThrowingContinuation { continuation in
+        queue.async {
+          continuation.resume(returning: response)
+        }
       }
-      return promise.futureResult
     } else {
-      return context.eventLoop.makeSucceededFuture(response)
+      return response
     }
   }
 
-  public func uploadFile(context: StreamingResponseCallContext<UploadResponse>) -> EventLoopFuture<
-    (StreamEvent<FileUploadRequest>) -> Void
-  > {
+  public func uploadFile(
+    request: RPCAsyncSequence<FileUploadRequest, any Error>,
+    response: RPCWriter<UploadResponse>,
+    context _: ServerContext
+  ) async throws {
     logger.info("Received uploadFile request")
 
     var fileHandle: FileHandle?
     var totalBytesReceived: Int64 = 0
     var metadata:
-      (file: String, expectedFileSize: Int64, expectedHash: Data, temporaryPath: String)? =
-        nil
+      (file: String, expectedFileSize: Int64, expectedHash: Data, temporaryPath: String)?
 
-    // Register a cleanup closure that will be called on disconnection or failure
-    context.statusPromise.futureResult.whenFailure { error in
-      self.logger.info("Client disconnected or an error occurred: \(error)")
-      if let fileHandle = fileHandle {
-        do {
-          try fileHandle.close()
-          self.logger.info("File handle closed successfully.")
-        } catch {
-          self.logger.error("Failed to close file handle: \(error)")
+    do {
+      for try await uploadRequest in request {
+        if let sharedSecret = sharedSecret, !sharedSecret.isEmpty,
+          uploadRequest.sharedSecret != sharedSecret
+        {
+          throw rpcError(code: .unauthenticated, message: "Shared secret mismatch.")
         }
-      }
-      // Clean up the partially uploaded file from disk
-      if let metadata = metadata {
-        self.logger.info("Cleaning up partial file: \(metadata.temporaryPath)")
-        try? FileManager.default.removeItem(atPath: metadata.temporaryPath)
-      }
-    }
 
-    let sharedSecret = sharedSecret
-    return context.eventLoop.makeSucceededFuture({
-      (event: StreamEvent<FileUploadRequest>) -> Void in
-      switch event {
-      case .message(let uploadRequest):
-        if let sharedSecret = sharedSecret, !sharedSecret.isEmpty {
-          guard uploadRequest.sharedSecret == sharedSecret else {
-            context.statusPromise.fail(ImageGenerationServiceError.sharedSecret)
-            return
-          }
-        }
         switch uploadRequest.request {
         case .initRequest(let initRequest):
-          // Process the initial upload request
-          do {
-
-            // Create file
-            let temporaryPath = ModelZoo.filePathForModelDownloaded(initRequest.filename + ".part")
-            metadata = (
-              file: initRequest.filename, expectedFileSize: initRequest.totalSize,
-              expectedHash: initRequest.sha256, temporaryPath: temporaryPath
-            )
-            self.logger.info("Init upload for metadata: \(metadata as Any)")
-            let _ = FileManager.default.createFile(atPath: temporaryPath, contents: nil)
-            fileHandle = FileHandle(forWritingAtPath: temporaryPath)
-            if fileHandle == nil {
-              throw GRPCStatus(code: .internalError, message: "Failed to create file handle")
-            }
-            var initResponse = UploadResponse()
-            initResponse.chunkUploadSuccess = true
-            initResponse.filename = initRequest.filename
-            initResponse.message = "File uploaded init successfully"
-            let _ = context.sendResponse(initResponse)
-          } catch {
-            context.statusPromise.fail(error)
+          let temporaryPath = ModelZoo.filePathForModelDownloaded(initRequest.filename + ".part")
+          metadata = (
+            file: initRequest.filename, expectedFileSize: initRequest.totalSize,
+            expectedHash: initRequest.sha256, temporaryPath: temporaryPath
+          )
+          logger.info("Init upload for metadata: \(String(describing: metadata))")
+          let _ = FileManager.default.createFile(atPath: temporaryPath, contents: nil)
+          fileHandle = FileHandle(forWritingAtPath: temporaryPath)
+          guard fileHandle != nil else {
+            throw rpcError(code: .internalError, message: "Failed to create file handle.")
           }
+
+          var initResponse = UploadResponse()
+          initResponse.chunkUploadSuccess = true
+          initResponse.filename = initRequest.filename
+          initResponse.message = "File upload initialized successfully"
+          try await response.write(initResponse)
+
         case .chunk(let chunk):
-          do {
-            guard let fileHandle = fileHandle else {
-              throw GRPCStatus(code: .internalError, message: "Failed to create file handle")
-            }
-
-            self.logger.info(
-              "Received chunk \(chunk.filename) \(chunk.content) chunk.offset:\(chunk.offset) totalBytesReceived:\(totalBytesReceived)"
-            )
-
-            if chunk.offset != totalBytesReceived {
-              throw GRPCStatus(code: .dataLoss, message: "Received chunk with unexpected offset")
-            }
-
-            try fileHandle.write(contentsOf: chunk.content)
-            totalBytesReceived += Int64(chunk.content.count)
-            var chunkResponse = UploadResponse()
-            chunkResponse.chunkUploadSuccess = true
-            chunkResponse.filename = chunk.filename
-            chunkResponse.receivedOffset = totalBytesReceived
-            chunkResponse.message = "File uploaded init successfully"
-            let _ = context.sendResponse(chunkResponse)
-          } catch {
-            context.statusPromise.fail(error)
-          }
-        case .none:
-          self.logger.info("Received None uploadRequest \(uploadRequest)")
-        }
-      case .end:
-        do {
-
-          guard let metadata = metadata else {
-            throw GRPCStatus(code: .internalError, message: "Missing File metadata")
+          guard let fileHandle else {
+            throw rpcError(code: .internalError, message: "Failed to create file handle.")
           }
 
-          guard let fileHandle = fileHandle else {
-            throw GRPCStatus(
-              code: .internalError, message: "file uploaded end, but Failed to create file handle")
-          }
-          try fileHandle.close()
-          self.logger.info("uploaded filename: \(metadata.file).part")
-
-          guard totalBytesReceived == metadata.expectedFileSize else {
-            self.logger.error(
-              "uploaded file size does not match expectation totalBytesReceived: \(totalBytesReceived) expectedFileSize:\(metadata.expectedFileSize)"
-            )
-
-            throw GRPCStatus(
-              code: .invalidArgument,
-              message:
-                "uploaded file size does not match expectation totalBytesReceived: \(totalBytesReceived) expectedFileSize:\(metadata.expectedFileSize)"
-            )
-          }
-          self.logger.info(
-            "uploaded file size totalBytesReceived: \(totalBytesReceived) expectedFileSize:\(metadata.expectedFileSize)"
+          logger.info(
+            "Received chunk \(chunk.filename) chunk.offset:\(chunk.offset) totalBytesReceived:\(totalBytesReceived)"
           )
 
-          if !self.validateUploadedFile(
-            atPath: metadata.temporaryPath, filename: metadata.file,
-            expectedHash: metadata.expectedHash)
-          {
-            self.logger.error("File validation failed")
-            try? FileManager.default.removeItem(atPath: metadata.temporaryPath)
-            throw GRPCStatus(code: .dataLoss, message: "File validation failed")
+          guard chunk.offset == totalBytesReceived else {
+            throw rpcError(code: .dataLoss, message: "Received chunk with unexpected offset.")
           }
-          self.logger.info("File uploaded successfully")
-          try? FileManager.default.removeItem(
-            atPath: ModelZoo.filePathForModelDownloaded(metadata.file))
-          try? FileManager.default.moveItem(
-            atPath: metadata.temporaryPath,
-            toPath: ModelZoo.filePathForModelDownloaded(metadata.file))
-          context.statusPromise.succeed(.ok)
 
-        } catch {
+          try fileHandle.write(contentsOf: chunk.content)
+          totalBytesReceived += Int64(chunk.content.count)
 
-          context.statusPromise.fail(error)
+          var chunkResponse = UploadResponse()
+          chunkResponse.chunkUploadSuccess = true
+          chunkResponse.filename = chunk.filename
+          chunkResponse.receivedOffset = totalBytesReceived
+          chunkResponse.message = "Chunk uploaded successfully"
+          try await response.write(chunkResponse)
+
+        case .none:
+          logger.info("Received empty upload request")
         }
       }
-    })
+
+      guard let metadata else {
+        throw rpcError(code: .internalError, message: "Missing file metadata.")
+      }
+
+      guard let fileHandle else {
+        throw rpcError(code: .internalError, message: "Missing file handle.")
+      }
+
+      try fileHandle.close()
+      logger.info("uploaded filename: \(metadata.file).part")
+
+      guard totalBytesReceived == metadata.expectedFileSize else {
+        throw rpcError(
+          code: .invalidArgument,
+          message:
+            "Uploaded size mismatch totalBytesReceived: \(totalBytesReceived) expectedFileSize: \(metadata.expectedFileSize)"
+        )
+      }
+
+      guard
+        self.validateUploadedFile(
+          atPath: metadata.temporaryPath,
+          filename: metadata.file,
+          expectedHash: metadata.expectedHash
+        )
+      else {
+        try? FileManager.default.removeItem(atPath: metadata.temporaryPath)
+        throw rpcError(code: .dataLoss, message: "File validation failed.")
+      }
+
+      try? FileManager.default.removeItem(
+        atPath: ModelZoo.filePathForModelDownloaded(metadata.file))
+      try? FileManager.default.moveItem(
+        atPath: metadata.temporaryPath,
+        toPath: ModelZoo.filePathForModelDownloaded(metadata.file))
+      logger.info("File uploaded successfully")
+
+    } catch {
+      if let fileHandle {
+        try? fileHandle.close()
+      }
+      if let metadata {
+        logger.info("Cleaning up partial file: \(metadata.temporaryPath)")
+        try? FileManager.default.removeItem(atPath: metadata.temporaryPath)
+      }
+      throw error
+    }
   }
 
   private func validateUploadedFile(atPath path: String, filename: String, expectedHash: Data)
