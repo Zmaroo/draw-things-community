@@ -21,11 +21,9 @@ let package = Package(
       ] : []),
   dependencies: [
     .package(
-      url: "https://github.com/liuliu/ccv.git", revision: "4533b3b8e9f3b4abdc46a068e772c737d6c4ead1"
+      url: "https://github.com/liuliu/ccv.git", revision: "fdb5a6cfa93e93d721ba304d9531b177daec91dd"
     ),
-    .package(
-      url: "https://github.com/liuliu/s4nnc.git",
-      revision: "1ea8e276dfbf0713b5f88d31ea47f4927357785a"),
+    .package(name: "s4nnc", path: "/Users/Michaelmarler/Projects/s4nnc/s4nncFork"),
     .package(
       url: "https://github.com/liuliu/dflat.git",
       revision: "73925e51e4f44add842177a229f9990cb13711ff"),
@@ -42,8 +40,11 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.23.1"),
     .package(url: "https://github.com/jagreenwood/swift-log-datadog.git", from: "0.3.0"),
 
-    .package(url: "https://github.com/grpc/grpc-swift.git", from: "1.16.0"),
-    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.27.0"),
+    .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.2.1"),
+    .package(url: "https://github.com/grpc/grpc-swift-nio-transport.git", from: "2.4.3"),
+    .package(url: "https://github.com/grpc/grpc-swift-protobuf.git", from: "2.2.0"),
+    .package(url: "https://github.com/grpc/grpc-swift-extras.git", exact: "2.0.0"),
+    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.36.0"),
     .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.3"),
     .package(url: "https://github.com/apple/swift-algorithms.git", from: "1.1.0"),
     .package(url: "https://github.com/apple/swift-numerics.git", from: "1.0.0"),
@@ -351,7 +352,8 @@ let package = Package(
         "Diffusion",
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "Logging", package: "swift-log"),
-        .product(name: "GRPC", package: "grpc-swift"),
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
         .product(name: "NNC", package: "s4nnc"),
         .product(name: "Collections", package: "swift-collections"),
       ],
@@ -360,7 +362,8 @@ let package = Package(
     .target(
       name: "GRPCImageServiceModels",
       dependencies: [
-        .product(name: "GRPC", package: "grpc-swift")
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        .product(name: "GRPCProtobuf", package: "grpc-swift-protobuf")
       ],
       path: "Libraries/GRPC/Models/Sources/imageService",
       exclude: ["imageService.proto"]
@@ -368,7 +371,8 @@ let package = Package(
     .target(
       name: "GRPCControlPanelModels",
       dependencies: [
-        .product(name: "GRPC", package: "grpc-swift")
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        .product(name: "GRPCProtobuf", package: "grpc-swift-protobuf")
       ],
       path: "Libraries/GRPC/Models/Sources/controlPanel",
       exclude: ["controlPanel.proto"]
@@ -377,7 +381,6 @@ let package = Package(
       name: "ServerConfigurationRewriter",
       dependencies: [
         "DataModels",
-        .product(name: "GRPC", package: "grpc-swift"),
       ],
       path: "Libraries/GRPC/ServerConfigurationRewriter/Sources"
     ),
@@ -396,6 +399,8 @@ let package = Package(
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "Logging", package: "swift-log"),
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
         .product(name: "NNC", package: "s4nnc"),
       ],
       path: "Libraries/GRPC/Server/Sources",
@@ -403,6 +408,7 @@ let package = Package(
         "GRPCFileUploader.swift",
         "GRPCHostnameUtils.swift",
         "GRPCServerAdvertiser.swift",
+        "ImageResponseEncoder.swift",
         "ImageGenerationClientWrapper.swift",
         "ImageGenerationServiceImpl.swift",
         "ProtectedValue.swift",
@@ -420,6 +426,8 @@ let package = Package(
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "Logging", package: "swift-log"),
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
       ],
       path: "Libraries/GRPC/ProxyControlClient/Sources"
     ),
@@ -431,7 +439,6 @@ let package = Package(
         "ModelZoo",
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "Logging", package: "swift-log"),
-        .product(name: "GRPC", package: "grpc-swift"),
       ],
       path: "Libraries/GRPC/ServerLoRALoader/Sources"
     ),
@@ -451,7 +458,10 @@ let package = Package(
         "Diffusion",
         "Utils",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
-        .product(name: "GRPC", package: "grpc-swift"),
+        .product(name: "GRPCCore", package: "grpc-swift-2"),
+        .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
+        .product(name: "GRPCHealthService", package: "grpc-swift-extras"),
+        .product(name: "GRPCReflectionService", package: "grpc-swift-extras"),
         .product(name: "DataDogLog", package: "swift-log-datadog"),
       ],
       path: "Apps/gRPCServerCLI",

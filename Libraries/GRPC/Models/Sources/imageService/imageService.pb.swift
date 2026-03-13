@@ -59,6 +59,159 @@ public enum DeviceType: SwiftProtobuf.Enum, Swift.CaseIterable {
 
 }
 
+public enum ResponseFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  public static let tensor = unspecified
+  case png // = 1
+  case jpeg // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .png
+    case 2: self = .jpeg
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .png: return 1
+    case .jpeg: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [ResponseFormat] = [
+    .unspecified,
+    .png,
+    .jpeg,
+  ]
+
+}
+
+public enum ResponsePayloadType: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case tensor // = 1
+  case png // = 2
+  case jpeg // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .tensor
+    case 2: self = .png
+    case 3: self = .jpeg
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .tensor: return 1
+    case .png: return 2
+    case .jpeg: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [ResponsePayloadType] = [
+    .unspecified,
+    .tensor,
+    .png,
+    .jpeg,
+  ]
+
+}
+
+public enum RawImageFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case rgba8 // = 1
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .rgba8
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .rgba8: return 1
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [RawImageFormat] = [
+    .unspecified,
+    .rgba8,
+  ]
+
+}
+
+public enum RawMaskFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case grayscale // = 1
+  case u8Mask // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .grayscale
+    case 2: self = .u8Mask
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .grayscale: return 1
+    case .u8Mask: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [RawMaskFormat] = [
+    .unspecified,
+    .grayscale,
+    .u8Mask,
+  ]
+
+}
+
 public enum ChunkState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case lastChunk // = 0
@@ -102,11 +255,11 @@ public struct EchoRequest: Sendable {
 
   /// The secret use to authenticate if needed.
   public var sharedSecret: String {
-    get {return _sharedSecret ?? String()}
+    get {_sharedSecret ?? String()}
     set {_sharedSecret = newValue}
   }
   /// Returns true if `sharedSecret` has been explicitly set.
-  public var hasSharedSecret: Bool {return self._sharedSecret != nil}
+  public var hasSharedSecret: Bool {self._sharedSecret != nil}
   /// Clears the value of `sharedSecret`. Subsequent reads from it will return its default value.
   public mutating func clearSharedSecret() {self._sharedSecret = nil}
 
@@ -143,11 +296,11 @@ public struct EchoReply: Sendable {
   public var files: [String] = []
 
   public var override: MetadataOverride {
-    get {return _override ?? MetadataOverride()}
+    get {_override ?? MetadataOverride()}
     set {_override = newValue}
   }
   /// Returns true if `override` has been explicitly set.
-  public var hasOverride: Bool {return self._override != nil}
+  public var hasOverride: Bool {self._override != nil}
   /// Clears the value of `override`. Subsequent reads from it will return its default value.
   public mutating func clearOverride() {self._override = nil}
 
@@ -156,11 +309,11 @@ public struct EchoReply: Sendable {
 
   /// The thresholds currently imposed by the server.
   public var thresholds: ComputeUnitThreshold {
-    get {return _thresholds ?? ComputeUnitThreshold()}
+    get {_thresholds ?? ComputeUnitThreshold()}
     set {_thresholds = newValue}
   }
   /// Returns true if `thresholds` has been explicitly set.
-  public var hasThresholds: Bool {return self._thresholds != nil}
+  public var hasThresholds: Bool {self._thresholds != nil}
   /// Clears the value of `thresholds`. Subsequent reads from it will return its default value.
   public mutating func clearThresholds() {self._thresholds = nil}
 
@@ -186,11 +339,11 @@ public struct FileListRequest: Sendable {
 
   /// The secret use to authenticate if needed.
   public var sharedSecret: String {
-    get {return _sharedSecret ?? String()}
+    get {_sharedSecret ?? String()}
     set {_sharedSecret = newValue}
   }
   /// Returns true if `sharedSecret` has been explicitly set.
-  public var hasSharedSecret: Bool {return self._sharedSecret != nil}
+  public var hasSharedSecret: Bool {self._sharedSecret != nil}
   /// Clears the value of `sharedSecret`. Subsequent reads from it will return its default value.
   public mutating func clearSharedSecret() {self._sharedSecret = nil}
 
@@ -201,7 +354,32 @@ public struct FileListRequest: Sendable {
   fileprivate var _sharedSecret: String? = nil
 }
 
-public struct FileExistenceResponse: @unchecked Sendable {
+public struct RemoteDownloadRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Configuration data as bytes (FlatBuffer).
+  public var configuration: Data = Data()
+
+  /// The secret use to authenticate if needed.
+  public var sharedSecret: String {
+    get {_sharedSecret ?? String()}
+    set {_sharedSecret = newValue}
+  }
+  /// Returns true if `sharedSecret` has been explicitly set.
+  public var hasSharedSecret: Bool {self._sharedSecret != nil}
+  /// Clears the value of `sharedSecret`. Subsequent reads from it will return its default value.
+  public mutating func clearSharedSecret() {self._sharedSecret = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _sharedSecret: String? = nil
+}
+
+public struct FileExistenceResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -217,7 +395,7 @@ public struct FileExistenceResponse: @unchecked Sendable {
   public init() {}
 }
 
-public struct MetadataOverride: @unchecked Sendable {
+public struct MetadataOverride: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -237,6 +415,42 @@ public struct MetadataOverride: @unchecked Sendable {
   public init() {}
 }
 
+public struct RawImagePayload: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var data: Data = Data()
+
+  public var width: UInt32 = 0
+
+  public var height: UInt32 = 0
+
+  public var format: RawImageFormat = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct RawMaskPayload: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var data: Data = Data()
+
+  public var width: UInt32 = 0
+
+  public var height: UInt32 = 0
+
+  public var format: RawMaskFormat = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// parameters in this Request is exactly same as generate function in ImageGenerator
 public struct ImageGenerationRequest: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -245,102 +459,146 @@ public struct ImageGenerationRequest: @unchecked Sendable {
 
   /// Image data as sha256 content.
   public var image: Data {
-    get {return _storage._image ?? Data()}
+    get {_storage._image ?? Data()}
     set {_uniqueStorage()._image = newValue}
   }
   /// Returns true if `image` has been explicitly set.
-  public var hasImage: Bool {return _storage._image != nil}
+  public var hasImage: Bool {_storage._image != nil}
   /// Clears the value of `image`. Subsequent reads from it will return its default value.
   public mutating func clearImage() {_uniqueStorage()._image = nil}
 
   public var scaleFactor: Int32 {
-    get {return _storage._scaleFactor}
+    get {_storage._scaleFactor}
     set {_uniqueStorage()._scaleFactor = newValue}
   }
 
   /// Optional  Mask data as sha256 content.
   public var mask: Data {
-    get {return _storage._mask ?? Data()}
+    get {_storage._mask ?? Data()}
     set {_uniqueStorage()._mask = newValue}
   }
   /// Returns true if `mask` has been explicitly set.
-  public var hasMask: Bool {return _storage._mask != nil}
+  public var hasMask: Bool {_storage._mask != nil}
   /// Clears the value of `mask`. Subsequent reads from it will return its default value.
   public mutating func clearMask() {_uniqueStorage()._mask = nil}
 
   /// List of hints
   public var hints: [HintProto] {
-    get {return _storage._hints}
+    get {_storage._hints}
     set {_uniqueStorage()._hints = newValue}
   }
 
   /// Optional prompt string
   public var prompt: String {
-    get {return _storage._prompt}
+    get {_storage._prompt}
     set {_uniqueStorage()._prompt = newValue}
   }
 
   /// Optional negative prompt string
   public var negativePrompt: String {
-    get {return _storage._negativePrompt}
+    get {_storage._negativePrompt}
     set {_uniqueStorage()._negativePrompt = newValue}
   }
 
   /// Configuration data as bytes (FlatBuffer)
   public var configuration: Data {
-    get {return _storage._configuration}
+    get {_storage._configuration}
     set {_uniqueStorage()._configuration = newValue}
   }
 
   /// Override the existing metadata on various Zoo objects.
   public var override: MetadataOverride {
-    get {return _storage._override ?? MetadataOverride()}
+    get {_storage._override ?? MetadataOverride()}
     set {_uniqueStorage()._override = newValue}
   }
   /// Returns true if `override` has been explicitly set.
-  public var hasOverride: Bool {return _storage._override != nil}
+  public var hasOverride: Bool {_storage._override != nil}
   /// Clears the value of `override`. Subsequent reads from it will return its default value.
   public mutating func clearOverride() {_uniqueStorage()._override = nil}
 
   /// Keywords send to the ImageGenerator, not useful for local generation.
   public var keywords: [String] {
-    get {return _storage._keywords}
+    get {_storage._keywords}
     set {_uniqueStorage()._keywords = newValue}
   }
 
   /// The name of the client.
   public var user: String {
-    get {return _storage._user}
+    get {_storage._user}
     set {_uniqueStorage()._user = newValue}
   }
 
   /// The type of the device uses.
   public var device: DeviceType {
-    get {return _storage._device}
+    get {_storage._device}
     set {_uniqueStorage()._device = newValue}
   }
 
   /// The image data as array of bytes. It is addressed by its sha256 content. This is modeled as content-addressable storage.
   public var contents: [Data] {
-    get {return _storage._contents}
+    get {_storage._contents}
     set {_uniqueStorage()._contents = newValue}
   }
 
   /// The secret use to authenticate if needed.
   public var sharedSecret: String {
-    get {return _storage._sharedSecret ?? String()}
+    get {_storage._sharedSecret ?? String()}
     set {_uniqueStorage()._sharedSecret = newValue}
   }
   /// Returns true if `sharedSecret` has been explicitly set.
-  public var hasSharedSecret: Bool {return _storage._sharedSecret != nil}
+  public var hasSharedSecret: Bool {_storage._sharedSecret != nil}
   /// Clears the value of `sharedSecret`. Subsequent reads from it will return its default value.
   public mutating func clearSharedSecret() {_uniqueStorage()._sharedSecret = nil}
 
   /// Whether we can accept chunked response.
   public var chunked: Bool {
-    get {return _storage._chunked}
+    get {_storage._chunked}
     set {_uniqueStorage()._chunked = newValue}
   }
+
+  /// Legacy format selector used for preview and final if split fields are unset.
+  public var responseFormat: ResponseFormat {
+    get {_storage._responseFormat}
+    set {_uniqueStorage()._responseFormat = newValue}
+  }
+
+  /// Optional preview-only format selector.
+  public var previewResponseFormat: ResponseFormat {
+    get {_storage._previewResponseFormat}
+    set {_uniqueStorage()._previewResponseFormat = newValue}
+  }
+
+  /// Optional final-only format selector.
+  public var finalResponseFormat: ResponseFormat {
+    get {_storage._finalResponseFormat}
+    set {_uniqueStorage()._finalResponseFormat = newValue}
+  }
+
+  /// Optional preview cadence; 0 means every step.
+  public var previewEveryNsteps: UInt32 {
+    get {_storage._previewEveryNsteps}
+    set {_uniqueStorage()._previewEveryNsteps = newValue}
+  }
+
+  /// Optional raw mask bytes with shape metadata.
+  public var rawMask: RawMaskPayload {
+    get {_storage._rawMask ?? RawMaskPayload()}
+    set {_uniqueStorage()._rawMask = newValue}
+  }
+  /// Returns true if `rawMask` has been explicitly set.
+  public var hasRawMask: Bool {_storage._rawMask != nil}
+  /// Clears the value of `rawMask`. Subsequent reads from it will return its default value.
+  public mutating func clearRawMask() {_uniqueStorage()._rawMask = nil}
+
+  /// Optional raw base image bytes with shape metadata.
+  public var rawImage: RawImagePayload {
+    get {_storage._rawImage ?? RawImagePayload()}
+    set {_uniqueStorage()._rawImage = newValue}
+  }
+  /// Returns true if `rawImage` has been explicitly set.
+  public var hasRawImage: Bool {_storage._rawImage != nil}
+  /// Clears the value of `rawImage`. Subsequent reads from it will return its default value.
+  public mutating func clearRawImage() {_uniqueStorage()._rawImage = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -366,7 +624,7 @@ public struct HintProto: Sendable {
 }
 
 /// Message to store each tensor and its associated float score
-public struct TensorAndWeight: @unchecked Sendable {
+public struct TensorAndWeight: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -593,7 +851,7 @@ public struct RemoteDownloadResponse: Sendable {
   public init() {}
 }
 
-public struct ImageGenerationResponse: @unchecked Sendable {
+public struct ImageGenerationResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -603,11 +861,11 @@ public struct ImageGenerationResponse: @unchecked Sendable {
 
   /// Single current signpost.
   public var currentSignpost: ImageGenerationSignpostProto {
-    get {return _currentSignpost ?? ImageGenerationSignpostProto()}
+    get {_currentSignpost ?? ImageGenerationSignpostProto()}
     set {_currentSignpost = newValue}
   }
   /// Returns true if `currentSignpost` has been explicitly set.
-  public var hasCurrentSignpost: Bool {return self._currentSignpost != nil}
+  public var hasCurrentSignpost: Bool {self._currentSignpost != nil}
   /// Clears the value of `currentSignpost`. Subsequent reads from it will return its default value.
   public mutating func clearCurrentSignpost() {self._currentSignpost = nil}
 
@@ -616,21 +874,21 @@ public struct ImageGenerationResponse: @unchecked Sendable {
 
   /// preview generating image data as bytes.
   public var previewImage: Data {
-    get {return _previewImage ?? Data()}
+    get {_previewImage ?? Data()}
     set {_previewImage = newValue}
   }
   /// Returns true if `previewImage` has been explicitly set.
-  public var hasPreviewImage: Bool {return self._previewImage != nil}
+  public var hasPreviewImage: Bool {self._previewImage != nil}
   /// Clears the value of `previewImage`. Subsequent reads from it will return its default value.
   public mutating func clearPreviewImage() {self._previewImage = nil}
 
   /// The scale factor of the image.
   public var scaleFactor: Int32 {
-    get {return _scaleFactor ?? 0}
+    get {_scaleFactor ?? 0}
     set {_scaleFactor = newValue}
   }
   /// Returns true if `scaleFactor` has been explicitly set.
-  public var hasScaleFactor: Bool {return self._scaleFactor != nil}
+  public var hasScaleFactor: Bool {self._scaleFactor != nil}
   /// Clears the value of `scaleFactor`. Subsequent reads from it will return its default value.
   public mutating func clearScaleFactor() {self._scaleFactor = nil}
 
@@ -639,11 +897,11 @@ public struct ImageGenerationResponse: @unchecked Sendable {
 
   /// The size of final image will be sent in the next payload.
   public var downloadSize: Int64 {
-    get {return _downloadSize ?? 0}
+    get {_downloadSize ?? 0}
     set {_downloadSize = newValue}
   }
   /// Returns true if `downloadSize` has been explicitly set.
-  public var hasDownloadSize: Bool {return self._downloadSize != nil}
+  public var hasDownloadSize: Bool {self._downloadSize != nil}
   /// Clears the value of `downloadSize`. Subsequent reads from it will return its default value.
   public mutating func clearDownloadSize() {self._downloadSize = nil}
 
@@ -652,16 +910,22 @@ public struct ImageGenerationResponse: @unchecked Sendable {
 
   /// If the remote needs to download something, which are they.
   public var remoteDownload: RemoteDownloadResponse {
-    get {return _remoteDownload ?? RemoteDownloadResponse()}
+    get {_remoteDownload ?? RemoteDownloadResponse()}
     set {_remoteDownload = newValue}
   }
   /// Returns true if `remoteDownload` has been explicitly set.
-  public var hasRemoteDownload: Bool {return self._remoteDownload != nil}
+  public var hasRemoteDownload: Bool {self._remoteDownload != nil}
   /// Clears the value of `remoteDownload`. Subsequent reads from it will return its default value.
   public mutating func clearRemoteDownload() {self._remoteDownload = nil}
 
   /// Generated audio data as bytes.
   public var generatedAudio: [Data] = []
+
+  /// Type for previewImage payload.
+  public var previewPayloadType: ResponsePayloadType = .unspecified
+
+  /// Type for generatedImages payload.
+  public var finalPayloadType: ResponsePayloadType = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -674,7 +938,7 @@ public struct ImageGenerationResponse: @unchecked Sendable {
   fileprivate var _remoteDownload: RemoteDownloadResponse? = nil
 }
 
-public struct FileChunk: @unchecked Sendable {
+public struct FileChunk: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -690,7 +954,7 @@ public struct FileChunk: @unchecked Sendable {
   public init() {}
 }
 
-public struct InitUploadRequest: @unchecked Sendable {
+public struct InitUploadRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -755,11 +1019,11 @@ public struct FileUploadRequest: Sendable {
 
   /// The secret use to authenticate if needed.
   public var sharedSecret: String {
-    get {return _sharedSecret ?? String()}
+    get {_sharedSecret ?? String()}
     set {_sharedSecret = newValue}
   }
   /// Returns true if `sharedSecret` has been explicitly set.
-  public var hasSharedSecret: Bool {return self._sharedSecret != nil}
+  public var hasSharedSecret: Bool {self._sharedSecret != nil}
   /// Clears the value of `sharedSecret`. Subsequent reads from it will return its default value.
   public mutating func clearSharedSecret() {self._sharedSecret = nil}
 
@@ -785,17 +1049,27 @@ public struct PubkeyRequest: Sendable {
 
   public var name: String = String()
 
+  /// The secret use to authenticate if needed.
+  public var sharedSecret: String {
+    get {_sharedSecret ?? String()}
+    set {_sharedSecret = newValue}
+  }
+  /// Returns true if `sharedSecret` has been explicitly set.
+  public var hasSharedSecret: Bool {self._sharedSecret != nil}
+  /// Clears the value of `sharedSecret`. Subsequent reads from it will return its default value.
+  public mutating func clearSharedSecret() {self._sharedSecret = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _sharedSecret: String? = nil
 }
 
 public struct PubkeyResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
-
-  public var message: String = String()
 
   public var pubkey: String = String()
 
@@ -809,9 +1083,21 @@ public struct HoursRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
+  /// The secret use to authenticate if needed.
+  public var sharedSecret: String {
+    get {_sharedSecret ?? String()}
+    set {_sharedSecret = newValue}
+  }
+  /// Returns true if `sharedSecret` has been explicitly set.
+  public var hasSharedSecret: Bool {self._sharedSecret != nil}
+  /// Clears the value of `sharedSecret`. Subsequent reads from it will return its default value.
+  public mutating func clearSharedSecret() {self._sharedSecret = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _sharedSecret: String? = nil
 }
 
 public struct HoursResponse: Sendable {
@@ -821,11 +1107,11 @@ public struct HoursResponse: Sendable {
 
   /// The thresholds currently imposed by the server.
   public var thresholds: ComputeUnitThreshold {
-    get {return _thresholds ?? ComputeUnitThreshold()}
+    get {_thresholds ?? ComputeUnitThreshold()}
     set {_thresholds = newValue}
   }
   /// Returns true if `thresholds` has been explicitly set.
-  public var hasThresholds: Bool {return self._thresholds != nil}
+  public var hasThresholds: Bool {self._thresholds != nil}
   /// Clears the value of `thresholds`. Subsequent reads from it will return its default value.
   public mutating func clearThresholds() {self._thresholds = nil}
 
@@ -839,26 +1125,32 @@ public struct HoursResponse: Sendable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 extension DeviceType: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    0: .same(proto: "PHONE"),
-    1: .same(proto: "TABLET"),
-    2: .same(proto: "LAPTOP"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PHONE\0\u{1}TABLET\0\u{1}LAPTOP\0")
+}
+
+extension ResponseFormat: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{a}\0RESPONSE_FORMAT_UNSPECIFIED\0\u{1}RESPONSE_FORMAT_TENSOR\0\u{1}RESPONSE_FORMAT_PNG\0\u{1}RESPONSE_FORMAT_JPEG\0")
+}
+
+extension ResponsePayloadType: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESPONSE_PAYLOAD_TYPE_UNSPECIFIED\0\u{1}RESPONSE_PAYLOAD_TYPE_TENSOR\0\u{1}RESPONSE_PAYLOAD_TYPE_PNG\0\u{1}RESPONSE_PAYLOAD_TYPE_JPEG\0")
+}
+
+extension RawImageFormat: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RAW_IMAGE_FORMAT_UNSPECIFIED\0\u{1}RAW_IMAGE_FORMAT_RGBA8\0")
+}
+
+extension RawMaskFormat: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RAW_MASK_FORMAT_UNSPECIFIED\0\u{1}RAW_MASK_FORMAT_GRAYSCALE\0\u{1}RAW_MASK_FORMAT_U8_MASK\0")
 }
 
 extension ChunkState: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    0: .same(proto: "LAST_CHUNK"),
-    1: .same(proto: "MORE_CHUNKS"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LAST_CHUNK\0\u{1}MORE_CHUNKS\0")
 }
 
 extension EchoRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "EchoRequest"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "name"),
-    2: .same(proto: "sharedSecret"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}sharedSecret\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -897,11 +1189,7 @@ extension EchoRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementati
 
 extension ComputeUnitThreshold: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "ComputeUnitThreshold"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "community"),
-    2: .same(proto: "plus"),
-    3: .same(proto: "expireAt"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}community\0\u{1}plus\0\u{1}expireAt\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -941,14 +1229,7 @@ extension ComputeUnitThreshold: SwiftProtobuf.Message, SwiftProtobuf._MessageImp
 
 extension EchoReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "EchoReply"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "message"),
-    2: .same(proto: "files"),
-    3: .same(proto: "override"),
-    4: .same(proto: "sharedSecretMissing"),
-    5: .same(proto: "thresholds"),
-    6: .same(proto: "serverIdentifier"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}message\0\u{1}files\0\u{1}override\0\u{1}sharedSecretMissing\0\u{1}thresholds\0\u{1}serverIdentifier\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1007,11 +1288,7 @@ extension EchoReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementation
 
 extension FileListRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "FileListRequest"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "files"),
-    2: .same(proto: "filesWithHash"),
-    3: .same(proto: "sharedSecret"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}files\0\u{1}filesWithHash\0\u{1}sharedSecret\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1053,13 +1330,48 @@ extension FileListRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplemen
   }
 }
 
+extension RemoteDownloadRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = "RemoteDownloadRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}configuration\0\u{1}sharedSecret\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.configuration) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._sharedSecret) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.configuration.isEmpty {
+      try visitor.visitSingularBytesField(value: self.configuration, fieldNumber: 1)
+    }
+    try { if let v = self._sharedSecret {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: RemoteDownloadRequest, rhs: RemoteDownloadRequest) -> Bool {
+    if lhs.configuration != rhs.configuration {return false}
+    if lhs._sharedSecret != rhs._sharedSecret {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension FileExistenceResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "FileExistenceResponse"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "files"),
-    2: .same(proto: "existences"),
-    3: .same(proto: "hashes"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}files\0\u{1}existences\0\u{1}hashes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1099,13 +1411,7 @@ extension FileExistenceResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
 
 extension MetadataOverride: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "MetadataOverride"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "models"),
-    2: .same(proto: "loras"),
-    3: .same(proto: "controlNets"),
-    4: .same(proto: "textualInversions"),
-    5: .same(proto: "upscalers"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}models\0\u{1}loras\0\u{1}controlNets\0\u{1}textualInversions\0\u{1}upscalers\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1153,24 +1459,99 @@ extension MetadataOverride: SwiftProtobuf.Message, SwiftProtobuf._MessageImpleme
   }
 }
 
+extension RawImagePayload: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = "RawImagePayload"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}data\0\u{1}width\0\u{1}height\0\u{1}format\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.width) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.height) }()
+      case 4: try { try decoder.decodeSingularEnumField(value: &self.format) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.data.isEmpty {
+      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 1)
+    }
+    if self.width != 0 {
+      try visitor.visitSingularUInt32Field(value: self.width, fieldNumber: 2)
+    }
+    if self.height != 0 {
+      try visitor.visitSingularUInt32Field(value: self.height, fieldNumber: 3)
+    }
+    if self.format != .unspecified {
+      try visitor.visitSingularEnumField(value: self.format, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: RawImagePayload, rhs: RawImagePayload) -> Bool {
+    if lhs.data != rhs.data {return false}
+    if lhs.width != rhs.width {return false}
+    if lhs.height != rhs.height {return false}
+    if lhs.format != rhs.format {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension RawMaskPayload: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = "RawMaskPayload"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}data\0\u{1}width\0\u{1}height\0\u{1}format\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.width) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.height) }()
+      case 4: try { try decoder.decodeSingularEnumField(value: &self.format) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.data.isEmpty {
+      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 1)
+    }
+    if self.width != 0 {
+      try visitor.visitSingularUInt32Field(value: self.width, fieldNumber: 2)
+    }
+    if self.height != 0 {
+      try visitor.visitSingularUInt32Field(value: self.height, fieldNumber: 3)
+    }
+    if self.format != .unspecified {
+      try visitor.visitSingularEnumField(value: self.format, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: RawMaskPayload, rhs: RawMaskPayload) -> Bool {
+    if lhs.data != rhs.data {return false}
+    if lhs.width != rhs.width {return false}
+    if lhs.height != rhs.height {return false}
+    if lhs.format != rhs.format {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "ImageGenerationRequest"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "image"),
-    2: .same(proto: "scaleFactor"),
-    3: .same(proto: "mask"),
-    4: .same(proto: "hints"),
-    5: .same(proto: "prompt"),
-    6: .same(proto: "negativePrompt"),
-    7: .same(proto: "configuration"),
-    8: .same(proto: "override"),
-    9: .same(proto: "keywords"),
-    10: .same(proto: "user"),
-    11: .same(proto: "device"),
-    12: .same(proto: "contents"),
-    13: .same(proto: "sharedSecret"),
-    14: .same(proto: "chunked"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}image\0\u{1}scaleFactor\0\u{1}mask\0\u{1}hints\0\u{1}prompt\0\u{1}negativePrompt\0\u{1}configuration\0\u{1}override\0\u{1}keywords\0\u{1}user\0\u{1}device\0\u{1}contents\0\u{1}sharedSecret\0\u{1}chunked\0\u{1}responseFormat\0\u{1}previewResponseFormat\0\u{1}finalResponseFormat\0\u{1}previewEveryNSteps\0\u{1}rawMask\0\u{1}rawImage\0")
 
   fileprivate class _StorageClass {
     var _image: Data? = nil
@@ -1187,16 +1568,18 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
     var _contents: [Data] = []
     var _sharedSecret: String? = nil
     var _chunked: Bool = false
+    var _responseFormat: ResponseFormat = .unspecified
+    var _previewResponseFormat: ResponseFormat = .unspecified
+    var _finalResponseFormat: ResponseFormat = .unspecified
+    var _previewEveryNsteps: UInt32 = 0
+    var _rawMask: RawMaskPayload? = nil
+    var _rawImage: RawImagePayload? = nil
 
-    #if swift(>=5.10)
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
       // This will force a copy to be made of this reference when the first mutation occurs;
       // hence, it is safe to mark this as `nonisolated(unsafe)`.
       static nonisolated(unsafe) let defaultInstance = _StorageClass()
-    #else
-      static let defaultInstance = _StorageClass()
-    #endif
 
     private init() {}
 
@@ -1215,6 +1598,12 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
       _contents = source._contents
       _sharedSecret = source._sharedSecret
       _chunked = source._chunked
+      _responseFormat = source._responseFormat
+      _previewResponseFormat = source._previewResponseFormat
+      _finalResponseFormat = source._finalResponseFormat
+      _previewEveryNsteps = source._previewEveryNsteps
+      _rawMask = source._rawMask
+      _rawImage = source._rawImage
     }
   }
 
@@ -1247,6 +1636,12 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
         case 12: try { try decoder.decodeRepeatedBytesField(value: &_storage._contents) }()
         case 13: try { try decoder.decodeSingularStringField(value: &_storage._sharedSecret) }()
         case 14: try { try decoder.decodeSingularBoolField(value: &_storage._chunked) }()
+        case 15: try { try decoder.decodeSingularEnumField(value: &_storage._responseFormat) }()
+        case 16: try { try decoder.decodeSingularEnumField(value: &_storage._previewResponseFormat) }()
+        case 17: try { try decoder.decodeSingularEnumField(value: &_storage._finalResponseFormat) }()
+        case 18: try { try decoder.decodeSingularUInt32Field(value: &_storage._previewEveryNsteps) }()
+        case 19: try { try decoder.decodeSingularMessageField(value: &_storage._rawMask) }()
+        case 20: try { try decoder.decodeSingularMessageField(value: &_storage._rawImage) }()
         default: break
         }
       }
@@ -1301,6 +1696,24 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
       if _storage._chunked != false {
         try visitor.visitSingularBoolField(value: _storage._chunked, fieldNumber: 14)
       }
+      if _storage._responseFormat != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._responseFormat, fieldNumber: 15)
+      }
+      if _storage._previewResponseFormat != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._previewResponseFormat, fieldNumber: 16)
+      }
+      if _storage._finalResponseFormat != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._finalResponseFormat, fieldNumber: 17)
+      }
+      if _storage._previewEveryNsteps != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._previewEveryNsteps, fieldNumber: 18)
+      }
+      try { if let v = _storage._rawMask {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 19)
+      } }()
+      try { if let v = _storage._rawImage {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 20)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1324,6 +1737,12 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
         if _storage._contents != rhs_storage._contents {return false}
         if _storage._sharedSecret != rhs_storage._sharedSecret {return false}
         if _storage._chunked != rhs_storage._chunked {return false}
+        if _storage._responseFormat != rhs_storage._responseFormat {return false}
+        if _storage._previewResponseFormat != rhs_storage._previewResponseFormat {return false}
+        if _storage._finalResponseFormat != rhs_storage._finalResponseFormat {return false}
+        if _storage._previewEveryNsteps != rhs_storage._previewEveryNsteps {return false}
+        if _storage._rawMask != rhs_storage._rawMask {return false}
+        if _storage._rawImage != rhs_storage._rawImage {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -1335,10 +1754,7 @@ extension ImageGenerationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageI
 
 extension HintProto: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "HintProto"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "hintType"),
-    2: .same(proto: "tensors"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}hintType\0\u{1}tensors\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1373,10 +1789,7 @@ extension HintProto: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementation
 
 extension TensorAndWeight: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "TensorAndWeight"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "tensor"),
-    2: .same(proto: "weight"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}tensor\0\u{1}weight\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1411,17 +1824,7 @@ extension TensorAndWeight: SwiftProtobuf.Message, SwiftProtobuf._MessageImplemen
 
 extension ImageGenerationSignpostProto: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "ImageGenerationSignpostProto"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "textEncoded"),
-    2: .same(proto: "imageEncoded"),
-    3: .same(proto: "sampling"),
-    4: .same(proto: "imageDecoded"),
-    5: .same(proto: "secondPassImageEncoded"),
-    6: .same(proto: "secondPassSampling"),
-    7: .same(proto: "secondPassImageDecoded"),
-    8: .same(proto: "faceRestored"),
-    9: .same(proto: "imageUpscaled"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}textEncoded\0\u{1}imageEncoded\0\u{1}sampling\0\u{1}imageDecoded\0\u{1}secondPassImageEncoded\0\u{1}secondPassSampling\0\u{1}secondPassImageDecoded\0\u{1}faceRestored\0\u{1}imageUpscaled\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1645,9 +2048,7 @@ extension ImageGenerationSignpostProto.ImageEncoded: SwiftProtobuf.Message, Swif
 
 extension ImageGenerationSignpostProto.Sampling: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = ImageGenerationSignpostProto.protoMessageName + ".Sampling"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "step"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}step\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1715,9 +2116,7 @@ extension ImageGenerationSignpostProto.SecondPassImageEncoded: SwiftProtobuf.Mes
 
 extension ImageGenerationSignpostProto.SecondPassSampling: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = ImageGenerationSignpostProto.protoMessageName + ".SecondPassSampling"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "step"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}step\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1804,13 +2203,7 @@ extension ImageGenerationSignpostProto.ImageUpscaled: SwiftProtobuf.Message, Swi
 
 extension RemoteDownloadResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "RemoteDownloadResponse"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "bytesReceived"),
-    2: .same(proto: "bytesExpected"),
-    3: .same(proto: "item"),
-    4: .same(proto: "itemsExpected"),
-    5: .same(proto: "tag"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}bytesReceived\0\u{1}bytesExpected\0\u{1}item\0\u{1}itemsExpected\0\u{1}tag\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1860,18 +2253,7 @@ extension RemoteDownloadResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageI
 
 extension ImageGenerationResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "ImageGenerationResponse"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "generatedImages"),
-    2: .same(proto: "currentSignpost"),
-    3: .same(proto: "signposts"),
-    4: .same(proto: "previewImage"),
-    5: .same(proto: "scaleFactor"),
-    6: .same(proto: "tags"),
-    7: .same(proto: "downloadSize"),
-    8: .same(proto: "chunkState"),
-    9: .same(proto: "remoteDownload"),
-    10: .same(proto: "generatedAudio"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generatedImages\0\u{1}currentSignpost\0\u{1}signposts\0\u{1}previewImage\0\u{1}scaleFactor\0\u{1}tags\0\u{1}downloadSize\0\u{1}chunkState\0\u{1}remoteDownload\0\u{1}generatedAudio\0\u{1}previewPayloadType\0\u{1}finalPayloadType\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1889,6 +2271,8 @@ extension ImageGenerationResponse: SwiftProtobuf.Message, SwiftProtobuf._Message
       case 8: try { try decoder.decodeSingularEnumField(value: &self.chunkState) }()
       case 9: try { try decoder.decodeSingularMessageField(value: &self._remoteDownload) }()
       case 10: try { try decoder.decodeRepeatedBytesField(value: &self.generatedAudio) }()
+      case 11: try { try decoder.decodeSingularEnumField(value: &self.previewPayloadType) }()
+      case 12: try { try decoder.decodeSingularEnumField(value: &self.finalPayloadType) }()
       default: break
       }
     }
@@ -1929,6 +2313,12 @@ extension ImageGenerationResponse: SwiftProtobuf.Message, SwiftProtobuf._Message
     if !self.generatedAudio.isEmpty {
       try visitor.visitRepeatedBytesField(value: self.generatedAudio, fieldNumber: 10)
     }
+    if self.previewPayloadType != .unspecified {
+      try visitor.visitSingularEnumField(value: self.previewPayloadType, fieldNumber: 11)
+    }
+    if self.finalPayloadType != .unspecified {
+      try visitor.visitSingularEnumField(value: self.finalPayloadType, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1943,6 +2333,8 @@ extension ImageGenerationResponse: SwiftProtobuf.Message, SwiftProtobuf._Message
     if lhs.chunkState != rhs.chunkState {return false}
     if lhs._remoteDownload != rhs._remoteDownload {return false}
     if lhs.generatedAudio != rhs.generatedAudio {return false}
+    if lhs.previewPayloadType != rhs.previewPayloadType {return false}
+    if lhs.finalPayloadType != rhs.finalPayloadType {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1950,11 +2342,7 @@ extension ImageGenerationResponse: SwiftProtobuf.Message, SwiftProtobuf._Message
 
 extension FileChunk: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "FileChunk"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "content"),
-    2: .same(proto: "filename"),
-    3: .same(proto: "offset"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}content\0\u{1}filename\0\u{1}offset\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1994,11 +2382,7 @@ extension FileChunk: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementation
 
 extension InitUploadRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "InitUploadRequest"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "filename"),
-    2: .same(proto: "sha256"),
-    3: .same(proto: "totalSize"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}filename\0\u{1}sha256\0\u{1}totalSize\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2038,12 +2422,7 @@ extension InitUploadRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplem
 
 extension UploadResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "UploadResponse"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "chunkUploadSuccess"),
-    2: .same(proto: "receivedOffset"),
-    3: .same(proto: "message"),
-    4: .same(proto: "filename"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}chunkUploadSuccess\0\u{1}receivedOffset\0\u{1}message\0\u{1}filename\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2088,11 +2467,7 @@ extension UploadResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplement
 
 extension FileUploadRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "FileUploadRequest"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "initRequest"),
-    2: .same(proto: "chunk"),
-    3: .same(proto: "sharedSecret"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}initRequest\0\u{1}chunk\0\u{1}sharedSecret\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2164,9 +2539,7 @@ extension FileUploadRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplem
 
 extension PubkeyRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "PubkeyRequest"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "name"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}sharedSecret\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2175,20 +2548,29 @@ extension PubkeyRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementa
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._sharedSecret) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.name.isEmpty {
       try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
     }
+    try { if let v = self._sharedSecret {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: PubkeyRequest, rhs: PubkeyRequest) -> Bool {
     if lhs.name != rhs.name {return false}
+    if lhs._sharedSecret != rhs._sharedSecret {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2196,10 +2578,7 @@ extension PubkeyRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementa
 
 extension PubkeyResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "PubkeyResponse"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "message"),
-    2: .same(proto: "pubkey"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}pubkey\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2207,25 +2586,20 @@ extension PubkeyResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplement
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.message) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.pubkey) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.pubkey) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.message.isEmpty {
-      try visitor.visitSingularStringField(value: self.message, fieldNumber: 1)
-    }
     if !self.pubkey.isEmpty {
-      try visitor.visitSingularStringField(value: self.pubkey, fieldNumber: 2)
+      try visitor.visitSingularStringField(value: self.pubkey, fieldNumber: 1)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: PubkeyResponse, rhs: PubkeyResponse) -> Bool {
-    if lhs.message != rhs.message {return false}
     if lhs.pubkey != rhs.pubkey {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
@@ -2234,18 +2608,33 @@ extension PubkeyResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplement
 
 extension HoursRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "HoursRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sharedSecret\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    // Load everything into unknown fields
-    while try decoder.nextFieldNumber() != nil {}
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self._sharedSecret) }()
+      default: break
+      }
+    }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._sharedSecret {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 1)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: HoursRequest, rhs: HoursRequest) -> Bool {
+    if lhs._sharedSecret != rhs._sharedSecret {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2253,9 +2642,7 @@ extension HoursRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementat
 
 extension HoursResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = "HoursResponse"
-  public static let _protobuf_nameMap: SwiftProtobuf._NameMap = [
-    1: .same(proto: "thresholds"),
-  ]
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}thresholds\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {

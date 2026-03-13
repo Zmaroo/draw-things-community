@@ -1,15 +1,14 @@
-import BinaryResources
 import Foundation
-import GRPC
 import GRPCControlPanelModels
-import NIO
-import NIOSSL
+import GRPCCore
+import GRPCNIOTransportHTTP2
 
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 public final class ProxyControlClient {
   public private(set) var deviceName: String? = nil
-  private var eventLoopGroup: EventLoopGroup? = nil
-  private var channel: GRPCChannel? = nil
-  public private(set) var client: ControlPanelServiceNIOClient? = nil
+  private var grpcClient: GRPCClient<HTTP2ClientTransport.Posix>? = nil
+  private var runConnectionsTask: Task<Void, Never>? = nil
+  public private(set) var client: (any ControlPanelService.ClientProtocol)? = nil
 
   public init(deviceName: String? = nil) {
     self.deviceName = deviceName
@@ -17,35 +16,37 @@ public final class ProxyControlClient {
 
   public func connect(host: String, port: Int) throws {
     print("connect to proxy server \(host):\(port)")
-    try? eventLoopGroup?.syncShutdownGracefully()
-    let eventLoopGroup = PlatformSupport.makeEventLoopGroup(loopCount: 1)
+    grpcClient?.beginGracefulShutdown()
+    runConnectionsTask?.cancel()
 
-    var configuration = GRPCChannelPool.Configuration.with(
-      target: .host(host, port: port),
-      transportSecurity: .plaintext,
-      eventLoopGroup: eventLoopGroup)
-    configuration.maximumReceiveMessageLength = 1024 * 1024 * 1024
-    let channel = try GRPCChannelPool.with(configuration: configuration)
-    let client = ControlPanelServiceNIOClient(channel: channel)
-    self.eventLoopGroup = eventLoopGroup
-    self.channel = channel
+    let transport = try HTTP2ClientTransport.Posix(
+      target: .dns(host: host, port: port),
+      transportSecurity: .plaintext
+    )
+    let grpcClient = GRPCClient(transport: transport)
+    let client = ControlPanelService.Client(wrapping: grpcClient)
+    self.grpcClient = grpcClient
     self.client = client
+    self.runConnectionsTask = Task {
+      do {
+        try await grpcClient.runConnections()
+      } catch {
+        print("proxy control client connection loop failed: \(error)")
+      }
+    }
   }
 
   public func disconnect() throws {
-    try channel?.close().wait()
-    try eventLoopGroup?.syncShutdownGracefully()
+    grpcClient?.beginGracefulShutdown()
+    runConnectionsTask?.cancel()
+    runConnectionsTask = nil
+    grpcClient = nil
     client = nil
-    channel = nil
-    eventLoopGroup = nil
   }
 
   deinit {
-    guard let eventLoopGroup = eventLoopGroup else { return }
-    // Do async shutdown in deinit, make sure we don't hold any of self reference.
-    let _ = channel?.close().always { _ in
-      eventLoopGroup.shutdownGracefully { _ in }
-    }
+    grpcClient?.beginGracefulShutdown()
+    runConnectionsTask?.cancel()
   }
 
   public func addGPUServer(
@@ -63,12 +64,12 @@ public final class ProxyControlClient {
     request.serverConfig.isHighPriority = isHighPriority
     request.operation = .add
 
-    let _ = client.manageGPUServer(request).response.always {
-      switch $0 {
-      case .success(let result):
+    Task {
+      do {
+        let result = try await client.manageGPUServer(request)
         print(result.message)
         completion(true)
-      case .failure(_):
+      } catch {
         print("can not add GPU Server \(address):\(port) to Proxy Server")
         completion(false)
       }
@@ -88,12 +89,12 @@ public final class ProxyControlClient {
     request.serverConfig.port = Int32(port)
     request.operation = .remove
 
-    let _ = client.manageGPUServer(request).response.always {
-      switch $0 {
-      case .success(let result):
+    Task {
+      do {
+        let result = try await client.manageGPUServer(request)
         print(result.message)
         completion(true)
-      case .failure(_):
+      } catch {
         print("can not remove GPU Server \(address):\(port) from Proxy Server")
         completion(false)
       }
@@ -111,13 +112,12 @@ public final class ProxyControlClient {
     var request = ThrottlingRequest()
     request.limitConfig = policies.mapValues { Int32($0) }
 
-    let _ = client.updateThrottlingConfig(request).response.always {
-      switch $0 {
-      case .success(let result):
+    Task {
+      do {
+        let result = try await client.updateThrottlingConfig(request)
         print("\(result.message)")
         completion(true)
-
-      case .failure(_):
+      } catch {
         print("can not update ThrottlingConfig succees")
         completion(false)
       }
@@ -133,13 +133,12 @@ public final class ProxyControlClient {
 
     let request = UpdatePemRequest()
 
-    let _ = client.updatePem(request).response.always {
-      switch $0 {
-      case .success(let response):
+    Task {
+      do {
+        let response = try await client.updatePem(request)
         print("\(response.message)")
         completion(true)
-
-      case .failure(_):
+      } catch {
         print("can not update PEM succees on Server")
         completion(false)
       }
@@ -155,13 +154,12 @@ public final class ProxyControlClient {
 
     let request = UpdateSharedSecretRequest()
 
-    let _ = client.updateSharedSecret(request).response.always {
-      switch $0 {
-      case .success(let response):
+    Task {
+      do {
+        let response = try await client.updateSharedSecret(request)
         print("\(response.message)")
         completion(true)
-
-      case .failure(_):
+      } catch {
         print("can not update Shared Secret succees on Server")
         completion(false)
       }
@@ -177,13 +175,12 @@ public final class ProxyControlClient {
 
     let request = UpdatePrivateKeyRequest()
 
-    let _ = client.updatePrivateKey(request).response.always {
-      switch $0 {
-      case .success(let response):
+    Task {
+      do {
+        let response = try await client.updatePrivateKey(request)
         print("\(response.message)")
         completion(true)
-
-      case .failure(_):
+      } catch {
         print("can not update Private Key succees on Server")
         completion(false)
       }
@@ -199,13 +196,12 @@ public final class ProxyControlClient {
 
     var request = UpdateModelListRequest()
     request.files = files
-    let _ = client.updateModelList(request).response.always {
-      switch $0 {
-      case .success(let response):
+    Task {
+      do {
+        let response = try await client.updateModelList(request)
         print(response.message)
         completion(true)
-
-      case .failure(_):
+      } catch {
         print("can not update Model List")
         completion(false)
       }
@@ -225,13 +221,12 @@ public final class ProxyControlClient {
     request.cuConfig = policies.mapValues { Int32($0) }
     request.expirationTimestamp = expirationTimestamp
 
-    let _ = client.updateComputeUnit(request).response.always {
-      switch $0 {
-      case .success(let result):
+    Task {
+      do {
+        let result = try await client.updateComputeUnit(request)
         print("\(result.message)")
         completion(true)
-
-      case .failure(_):
+      } catch {
         print("can not update ComputeUnit policy")
         completion(false)
       }

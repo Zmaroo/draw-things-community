@@ -4,23 +4,34 @@ import DataDogLog
 import DataModels
 import Dflat
 import Diffusion
+import Dispatch
 import Foundation
-import GRPC
 import GRPCControlPanelModels
+import GRPCCore
+import GRPCHealthService
 import GRPCImageServiceModels
+import GRPCNIOTransportCore
+import GRPCNIOTransportHTTP2
+import GRPCReflectionService
 import GRPCServer
 import ImageGenerator
 import LocalImageGenerator
 import Logging
 import ModelZoo
-import NIO
-import NIOSSL
 import NNC
 import ProxyControlClient
 import SQLiteDflat
 import ServerLoRALoader
 import Tokenizer
 import Utils
+
+#if os(Linux)
+  import Glibc
+#else
+  import Darwin
+#endif
+
+private let logger = Logger(label: "gRPCServerCLI")
 
 private func createTemporaryDirectory() -> String {
   let fileManager = FileManager.default
@@ -383,8 +394,8 @@ struct gRPCServerCLI: ParsableCommand {
   )
   var echoOnQueue: Bool = false
 
-  mutating func run() throws {
-    #if os(Linux)
+  #if os(Linux)
+    mutating func run() throws {
       if supervised {
         // Run in supervised mode
         supervise(
@@ -395,11 +406,15 @@ struct gRPCServerCLI: ParsableCommand {
       } else {
         try startGRPCServer()
       }
-    #else
+    }
+  #else
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    mutating func run() throws {
       try startGRPCServer()
-    #endif
-  }
+    }
+  #endif
 
+  @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
   func startGRPCServer() throws {
     if debug {
       DynamicGraph.logLevel = .verbose
@@ -493,15 +508,11 @@ struct gRPCServerCLI: ParsableCommand {
       serverLoRALoader: serverLoRALoader)
   }
 
+  @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
   func runAndBlock(
     name: String, address: String, port: Int, TLS: Bool,
     serverLoRALoader: ServerLoRALoader?
   ) throws {
-
-    let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    defer {
-      try! group.syncShutdownGracefully()
-    }
     let queue = DispatchQueue(label: "com.draw-things.edit", qos: .userInteractive)
     let (tempDir, localImageGenerator) = createLocalImageGenerator(queue: queue)
     if let cacheUri = cacheUri {
@@ -534,49 +545,211 @@ struct gRPCServerCLI: ParsableCommand {
     }
     imageGenerationServiceImpl.sharedSecret = sharedSecret.isEmpty ? nil : sharedSecret
 
-    // Bind the server and get an `EventLoopFuture<Server>`
-    let serverFuture: EventLoopFuture<GRPC.Server>
-    let certificate = try? NIOSSLCertificate(
-      bytes: [UInt8](BinaryResources.server_crt_crt), format: .pem)
-    let privateKey = try? NIOSSLPrivateKey(
-      bytes: [UInt8](BinaryResources.server_key_key), format: .pem)
-    var TLS = TLS
-    if TLS, let certificate = certificate, let privateKey = privateKey {
-      serverFuture = GRPC.Server.usingTLS(
-        with: GRPCTLSConfiguration.makeServerConfigurationBackedByNIOSSL(
-          certificateChain: [.certificate(certificate)], privateKey: .privateKey(privateKey)),
-        on: group
-      )
-      .withServiceProviders([imageGenerationServiceImpl])
-      .withMaximumReceiveMessageLength(1024 * 1024 * 1024)
-      .bind(host: address, port: port)
+    var transportConfig = HTTP2ServerTransport.Posix.Config.defaults
+    transportConfig.rpc.maxRequestPayloadSize = 1024 * 1024 * 1024
+
+    var tlsEnabled = TLS
+    let transportSecurity: HTTP2ServerTransport.Posix.TransportSecurity
+    if TLS {
+      let certBytes = [UInt8](BinaryResources.server_crt_crt)
+      let keyBytes = [UInt8](BinaryResources.server_key_key)
+      if certBytes.isEmpty || keyBytes.isEmpty {
+        tlsEnabled = false
+        transportSecurity = .plaintext
+      } else {
+        transportSecurity = .tls(
+          certificateChain: [.bytes(certBytes, format: .pem)],
+          privateKey: .bytes(keyBytes, format: .pem)
+        )
+      }
     } else {
-      serverFuture = GRPC.Server.insecure(group: group)
-        .withServiceProviders([imageGenerationServiceImpl])
-        .withMaximumReceiveMessageLength(1024 * 1024 * 1024)
-        .bind(host: address, port: port)
-      TLS = false
+      transportSecurity = .plaintext
     }
 
-    let server: Server = try serverFuture.wait()
+    let healthService = HealthService()
+    healthService.provider.updateStatus(.serving, forService: .ImageGenerationService)
+    healthService.provider.updateStatus(.serving, forService: "")
 
-    if let localAddress = server.channel.localAddress, let port = localAddress.port {
-      print("Server started on local address: \(localAddress), port \(port)")
+    let reflectionService = makeReflectionService()
+    let services: [any RegistrableRPCService]
+    if let reflectionService {
+      services = [imageGenerationServiceImpl, healthService, reflectionService]
+    } else {
+      services = [imageGenerationServiceImpl, healthService]
+    }
+
+    struct GRPCServerHandle {
+      let serve: @Sendable () async throws -> Void
+      let listeningAddress: @Sendable () async throws -> GRPCNIOTransportCore.SocketAddress?
+      let beginGracefulShutdown: @Sendable () -> Void
+    }
+
+    let serverHandle: GRPCServerHandle
+    #if canImport(Network)
+      if !TLS {
+        var niotsConfig = HTTP2ServerTransport.TransportServices.Config.defaults
+        niotsConfig.rpc.maxRequestPayloadSize = 1024 * 1024 * 1024
+        let transport = HTTP2ServerTransport.TransportServices(
+          address: .ipv4(host: address, port: port),
+          transportSecurity: .plaintext,
+          config: niotsConfig
+        )
+        let server = GRPCServer(transport: transport, services: services)
+        serverHandle = GRPCServerHandle(
+          serve: { try await server.serve() },
+          listeningAddress: { try await server.listeningAddress },
+          beginGracefulShutdown: { server.beginGracefulShutdown() }
+        )
+      } else {
+        let transport = HTTP2ServerTransport.Posix(
+          address: .ipv4(host: address, port: port),
+          transportSecurity: transportSecurity,
+          config: transportConfig
+        )
+        let server = GRPCServer(transport: transport, services: services)
+        serverHandle = GRPCServerHandle(
+          serve: { try await server.serve() },
+          listeningAddress: { try await server.listeningAddress },
+          beginGracefulShutdown: { server.beginGracefulShutdown() }
+        )
+      }
+    #else
+      let transport = HTTP2ServerTransport.Posix(
+        address: .ipv4(host: address, port: port),
+        transportSecurity: transportSecurity,
+        config: transportConfig
+      )
+      let server = GRPCServer(transport: transport, services: services)
+      serverHandle = GRPCServerHandle(
+        serve: { try await server.serve() },
+        listeningAddress: { try await server.listeningAddress },
+        beginGracefulShutdown: { server.beginGracefulShutdown() }
+      )
+    #endif
+    let serverTask = Task {
+      try await serverHandle.serve()
+    }
+
+    func waitForAsync<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) throws
+      -> T
+    {
+      let semaphore = DispatchSemaphore(value: 0)
+      let resultQueue = DispatchQueue(label: "gRPCServerCLI.waitForAsync.result")
+      var result: Result<T, any Error>?
+      Task {
+        do {
+          let value = try await operation()
+          resultQueue.sync {
+            result = .success(value)
+          }
+        } catch {
+          resultQueue.sync {
+            result = .failure(error)
+          }
+        }
+        semaphore.signal()
+      }
+      semaphore.wait()
+      return try resultQueue.sync {
+        try result!.get()
+      }
+    }
+
+    if let localAddress = try waitForAsync({ try await serverHandle.listeningAddress() }) {
+      print("Server started on local address: \(localAddress)")
     } else {
       print("Server started, but port is unknown")
     }
     let advertiser: GRPCServerAdvertiser = GRPCServerAdvertiser(name: name)
-    advertiser.startAdvertising(port: Int32(port), TLS: TLS)
-
-    if let json = join {
-      try addServers(try AddServersConfiguration.parse(json))
+    advertiser.startAdvertising(port: Int32(port), TLS: tlsEnabled)
+    defer {
+      serverHandle.beginGracefulShutdown()
+      advertiser.stopAdvertising()
     }
 
-    // Block the current thread until the server closes
-    try server.onClose.wait()
-    advertiser.stopAdvertising()
+    var signalSources = [DispatchSourceSignal]()
+    let signalQueue = DispatchQueue(label: "gRPCServerCLI.signal")
+    func installSignalHandler(_ signalValue: Int32) {
+      signal(signalValue, SIG_IGN)
+      let source = DispatchSource.makeSignalSource(signal: signalValue, queue: signalQueue)
+      source.setEventHandler {
+        logger.info("Received signal \(signalValue); starting graceful shutdown")
+        serverHandle.beginGracefulShutdown()
+        advertiser.stopAdvertising()
+      }
+      source.resume()
+      signalSources.append(source)
+    }
+    installSignalHandler(SIGINT)
+    installSignalHandler(SIGTERM)
+
+    if let json = join {
+      let config = try AddServersConfiguration.parse(json)
+      try addServers(config)
+    }
+
+    // Block until the server shuts down.
+    _ = try waitForAsync { try await serverTask.value }
   }
 
+  @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+  private func makeReflectionService() -> ReflectionService? {
+    guard let descriptorURL = resolveDescriptorSetURL() else {
+      logger.warning("gRPC reflection descriptor set missing")
+      return nil
+    }
+
+    do {
+      return try ReflectionService(descriptorSetFileURLs: [descriptorURL])
+    } catch {
+      logger.warning("gRPC reflection init failed: \(String(describing: error))")
+      return nil
+    }
+  }
+
+  private func resolveDescriptorSetURL() -> URL? {
+    let bundle = Bundle.main
+    if let url = bundle.url(forResource: "grpc_descriptor_set", withExtension: "pb") {
+      return url
+    }
+
+    let env = ProcessInfo.processInfo.environment
+    if let runfilesDir = env["RUNFILES_DIR"] {
+      let runfilesURL = URL(fileURLWithPath: runfilesDir)
+      let candidates = [
+        runfilesURL.appendingPathComponent("_main/Apps/gRPCServerCLIResources/grpc_descriptor_set.pb"),
+        runfilesURL.appendingPathComponent("Apps/gRPCServerCLIResources/grpc_descriptor_set.pb"),
+      ]
+      for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
+        return candidate
+      }
+    }
+
+    if let workspaceDir = env["BUILD_WORKSPACE_DIRECTORY"] {
+      let workspaceURL = URL(fileURLWithPath: workspaceDir)
+      let candidate = workspaceURL.appendingPathComponent("Apps/gRPCServerCLI/Resources/grpc_descriptor_set.pb")
+      if FileManager.default.fileExists(atPath: candidate.path) {
+        return candidate
+      }
+    }
+
+    if let manifestPath = env["RUNFILES_MANIFEST_FILE"],
+      let manifest = try? String(contentsOfFile: manifestPath, encoding: .utf8)
+    {
+      for line in manifest.split(separator: "\n") {
+        let parts = line.split(separator: " ", maxSplits: 1)
+        guard parts.count == 2 else { continue }
+        let runfile = parts[0]
+        if runfile.hasSuffix("Apps/gRPCServerCLIResources/grpc_descriptor_set.pb") {
+          return URL(fileURLWithPath: String(parts[1]))
+        }
+      }
+    }
+
+    return nil
+  }
+
+  @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
   func addServers(_ addServers: AddServersConfiguration) throws {
     guard !addServers.servers.isEmpty else {
       return

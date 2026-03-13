@@ -2,6 +2,7 @@ syntax = "proto3";
 
 service ImageGenerationService {
   rpc GenerateImage(ImageGenerationRequest) returns (stream ImageGenerationResponse);
+  rpc RemoteDownload(RemoteDownloadRequest) returns (stream RemoteDownloadResponse);
   rpc FilesExist(FileListRequest) returns (FileExistenceResponse);
   rpc UploadFile(stream FileUploadRequest) returns (stream UploadResponse);
   rpc Echo(EchoRequest) returns (EchoReply);
@@ -36,6 +37,11 @@ message FileListRequest {
   optional string sharedSecret = 3; // The secret use to authenticate if needed.
 }
 
+message RemoteDownloadRequest {
+  bytes configuration = 1; // Configuration data as bytes (FlatBuffer).
+  optional string sharedSecret = 2; // The secret use to authenticate if needed.
+}
+
 message FileExistenceResponse {
   repeated string files = 1;
   repeated bool existences = 2;
@@ -56,6 +62,46 @@ enum DeviceType {
   LAPTOP = 2;
 }
 
+enum ResponseFormat {
+  option allow_alias = true;
+  RESPONSE_FORMAT_UNSPECIFIED = 0;
+  RESPONSE_FORMAT_TENSOR = 0;
+  RESPONSE_FORMAT_PNG = 1;
+  RESPONSE_FORMAT_JPEG = 2;
+}
+
+enum ResponsePayloadType {
+  RESPONSE_PAYLOAD_TYPE_UNSPECIFIED = 0;
+  RESPONSE_PAYLOAD_TYPE_TENSOR = 1;
+  RESPONSE_PAYLOAD_TYPE_PNG = 2;
+  RESPONSE_PAYLOAD_TYPE_JPEG = 3;
+}
+
+enum RawImageFormat {
+  RAW_IMAGE_FORMAT_UNSPECIFIED = 0;
+  RAW_IMAGE_FORMAT_RGBA8 = 1;
+}
+
+message RawImagePayload {
+  bytes data = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  RawImageFormat format = 4;
+}
+
+enum RawMaskFormat {
+  RAW_MASK_FORMAT_UNSPECIFIED = 0;
+  RAW_MASK_FORMAT_GRAYSCALE = 1;
+  RAW_MASK_FORMAT_U8_MASK = 2;
+}
+
+message RawMaskPayload {
+  bytes data = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  RawMaskFormat format = 4;
+}
+
 // parameters in this Request is exactly same as generate function in ImageGenerator
 message ImageGenerationRequest {
   optional bytes image = 1;      // Image data as sha256 content.
@@ -72,6 +118,12 @@ message ImageGenerationRequest {
   repeated bytes contents = 12; // The image data as array of bytes. It is addressed by its sha256 content. This is modeled as content-addressable storage.
   optional string sharedSecret = 13; // The secret use to authenticate if needed.
   bool chunked = 14; // Whether we can accept chunked response.
+  ResponseFormat responseFormat = 15; // Legacy format selector used for preview and final if split fields are unset.
+  ResponseFormat previewResponseFormat = 16; // Optional preview-only format selector.
+  ResponseFormat finalResponseFormat = 17; // Optional final-only format selector.
+  uint32 previewEveryNSteps = 18; // Optional preview cadence; 0 means every step.
+  optional RawMaskPayload rawMask = 19; // Optional raw mask bytes with shape metadata.
+  optional RawImagePayload rawImage = 20; // Optional raw base image bytes with shape metadata.
 }
 
 message HintProto {
@@ -143,6 +195,8 @@ message ImageGenerationResponse {
   ChunkState chunkState = 8; // What's this chunk is, it helps to compose the chunks together.
   optional RemoteDownloadResponse remoteDownload = 9; // If the remote needs to download something, which are they.
   repeated bytes generatedAudio = 10;      // Generated audio data as bytes.
+  ResponsePayloadType previewPayloadType = 11; // Type for previewImage payload.
+  ResponsePayloadType finalPayloadType = 12; // Type for generatedImages payload.
 }
 
 message FileChunk {
@@ -175,16 +229,17 @@ message FileUploadRequest {
 
 message PubkeyRequest {
   string name = 1;
+  optional string sharedSecret = 2; // The secret use to authenticate if needed.
 }
 
 message PubkeyResponse {
-  string message = 1;
-  string pubkey = 2;
+  string pubkey = 1;
 }
 
 message HoursRequest {
+  optional string sharedSecret = 1; // The secret use to authenticate if needed.
 }
 
 message HoursResponse {
-  ComputeUnitThreshold thresholds = 1; // The thresholds currently imposed by the server.
+  optional ComputeUnitThreshold thresholds = 1; // The thresholds currently imposed by the server.
 }
