@@ -925,9 +925,7 @@ public final class ImageGenerationServiceImpl: @unchecked Sendable,
       let audioCodec: DynamicGraph.Store.Codec = responseCompression ? [.zip, .fpzip] : []
       let audioData = audio?.compactMap { $0.data(using: audioCodec) }
       logger.info("Image processed")
-      let totalBytes = imageDatas.reduce(0) { partialResult, imageData in
-        return partialResult + imageData.count
-      }
+      let totalBytes = imageDatas.reduce(0) { $0 + $1.count }
       logger.info(
         "Image response payloadType=\(encodedImages.payloadType.rawValue), count=\(imageDatas.count), bytes=\(totalBytes)"
       )
@@ -954,21 +952,10 @@ public final class ImageGenerationServiceImpl: @unchecked Sendable,
               configurationDictionary =
                 (try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]) ?? [:]
             } else {
-              configurationDictionary = [:]
-            }
-            logger.error(
-              "Image processed failed, failed configuration:\(configurationDictionary)")
-          }
-          $0.scaleFactor = Int32(scaleFactor)
-          $0.chunkState = .lastChunk
-          $0.finalPayloadType = finalPayloadType
-          $0.tags = Self.grpcTraceTags(
-            requestID: requestID,
-            eventType: "final_empty",
-            isTerminal: false
-          )
-        }
-        try writeResponseSynchronously(finalResponse, to: response)
+configurationDictionary = [:]
+             }
+           }
+           try writeResponseSynchronously(finalResponse, to: response)
       } else {
         let chunked = chunked && totalBytes > 4 * 1024 * 1024  // If total bytes is less than 4MiB, send them in one batch. Otherwise, chunk them up.
         logger.info("Image processed successfully, should send in chunks? \(chunked)")
@@ -1243,6 +1230,10 @@ public final class ImageGenerationServiceImpl: @unchecked Sendable,
         switch uploadRequest.request {
         case .initRequest(let initRequest):
           let temporaryPath = ModelZoo.filePathForModelDownloaded(initRequest.filename + ".part")
+          
+          // Clean up any existing partial file from previous failed uploads
+          try? FileManager.default.removeItem(atPath: temporaryPath)
+          
           metadata = (
             file: initRequest.filename, expectedFileSize: initRequest.totalSize,
             expectedHash: initRequest.sha256, temporaryPath: temporaryPath
@@ -1318,11 +1309,21 @@ public final class ImageGenerationServiceImpl: @unchecked Sendable,
         throw rpcError(code: .dataLoss, message: "File validation failed.")
       }
 
-      try? FileManager.default.removeItem(
-        atPath: ModelZoo.filePathForModelDownloaded(metadata.file))
-      try? FileManager.default.moveItem(
-        atPath: metadata.temporaryPath,
-        toPath: ModelZoo.filePathForModelDownloaded(metadata.file))
+      let finalPath = ModelZoo.filePathForModelDownloaded(metadata.file)
+      do {
+        try FileManager.default.removeItem(atPath: finalPath)
+      } catch {
+        logger.error("Failed to remove existing file at \(finalPath): \(error)")
+        throw rpcError(code: .internalError, message: "Failed to remove existing file.")
+      }
+      
+      do {
+        try FileManager.default.moveItem(atPath: metadata.temporaryPath, toPath: finalPath)
+      } catch {
+        logger.error("Failed to move temp file to \(finalPath): \(error)")
+        throw rpcError(code: .internalError, message: "Failed to finalize file upload.")
+      }
+      
       logger.info("File uploaded successfully")
 
     } catch {
