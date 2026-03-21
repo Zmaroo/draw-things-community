@@ -279,22 +279,31 @@ public protocol Sampler<FloatType, UNet> {
 // Cfg related shared functions.
 
 public func isCfgEnabled(
-  textGuidanceScale: Float, imageGuidanceScale: Float, startFrameCfg: Float, version: ModelVersion,
-  modifier: SamplerModifier
-)
-  -> Bool
-{
-  guard version != .svdI2v else {
-    return (textGuidanceScale - 1).magnitude > 1e-3 || (startFrameCfg - 1).magnitude > 1e-3
-  }
-  guard modifier != .editing else {
-    // If both are 1, no cfg.
-    if (textGuidanceScale - 1).magnitude <= 1e-3 && (imageGuidanceScale - 1).magnitude <= 1e-3 {
-      return false
+  textGuidanceScale: Float, imageGuidanceScale: Float, startFrameCfg: Float,
+  version: ModelVersion, modifier: SamplerModifier
+) -> Bool {
+  let result: Bool
+  switch version {
+  case .flux1, .flux2, .flux2_9b, .flux2_4b, .hunyuanVideo:
+    result = false
+  case .svdI2v:
+    result = true
+  default:
+    guard modifier != .editing else {
+      // If both are 1, no cfg.
+      if (textGuidanceScale - 1).magnitude <= 1e-3 && (imageGuidanceScale - 1).magnitude <= 1e-3 {
+        result = false
+      } else {
+        result = true
+      }
+      break
     }
-    return true
+    result = (textGuidanceScale - 1).magnitude > 1e-3 || (startFrameCfg - 1).magnitude > 1e-3
   }
-  return (textGuidanceScale - 1).magnitude > 1e-3
+  if version == .flux1 || version == .flux2 || version == .flux2_9b || version == .flux2_4b {
+    print("[SDK][Sampler] isCfgEnabled version=\(version) scale=\(textGuidanceScale) -> result=\(result)")
+  }
+  return result
 }
 
 public func cfgChannelsAndInputChannels(
